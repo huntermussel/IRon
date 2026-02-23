@@ -4,8 +4,11 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"iron/internal/chat"
 	"iron/internal/llm"
+	"iron/internal/middleware"
+	_ "iron/middlewares/autoload"
 	"os"
 	"strings"
 	"time"
@@ -30,7 +33,26 @@ func main() {
 		fmt.Fprintf(os.Stderr, "failed to initialize ollama client: %v\n", err)
 		os.Exit(1)
 	}
-	service := chat.NewService(adapter)
+
+	var mwLog io.Writer
+	if logPath := strings.TrimSpace(os.Getenv("IRON_MW_LOG_FILE")); logPath != "" {
+		f, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "failed to open middleware log file: %v\n", err)
+			os.Exit(1)
+		}
+		defer f.Close()
+		mwLog = f
+	}
+
+	chain := middleware.NewChainFromRegistry(mwLog)
+
+	var service *chat.Service
+	if chain != nil {
+		service = chat.NewService(adapter, chat.WithMiddlewareChain(chain))
+	} else {
+		service = chat.NewService(adapter)
+	}
 
 	fmt.Println("IRon chat (LangChain Go + Ollama)")
 	fmt.Printf("model=%s (set IRON_MODEL), ollama_url=%s\n", model, valueOrDefault(baseURL, "http://localhost:11434"))
