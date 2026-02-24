@@ -6,6 +6,7 @@ import (
 	_ "iron/middlewares/emmetbridge"
 	_ "iron/middlewares/greeting"
 	_ "iron/middlewares/intentcompressor"
+	_ "iron/middlewares/localcache"
 	_ "iron/middlewares/tokenbudget"
 	_ "iron/middlewares/trashcleanner"
 )
