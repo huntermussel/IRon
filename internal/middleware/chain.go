@@ -22,7 +22,11 @@ type DecisionResult struct {
 	Priority     int
 	Decision     Decision
 }
-
+/**
+ * 
+ * mws: a slice of Middleware instances to be used in the chain.
+ * mw: a Middleware instance to be used in the chain.
+ */
 func NewChain(mws ...Middleware) *Chain {
 	c := &Chain{}
 	for _, mw := range mws {

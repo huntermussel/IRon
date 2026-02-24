@@ -7,7 +7,7 @@ import (
 
 func TestCompressEnglishPrompt_PreservesNegationAndTechTokens(t *testing.T) {
 	in := "I do NOT want Kubernetes right now; I only need a simple deploy on Cloudflare Pages v2.1.0 with Redis."
-	out := compressEnglishPrompt(in)
+	out := compressPragmatic(in, "aggr")
 
 	if !strings.Contains(out, "not") {
 		t.Fatalf("expected negation to be preserved, got: %q", out)

@@ -92,7 +92,9 @@ func (c *Chain) debugLog(e *Event, id string, priority int, skipped bool, inText
 
 	saved := inTok - outTok
 	var savedPct float64
-	if inTok > 0 {
+	if dec.Cancel && inTok > 0 {
+		savedPct = 1.0
+	} else if inTok > 0 {
 		savedPct = float64(saved) / float64(inTok)
 	}
 

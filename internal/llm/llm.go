@@ -9,6 +9,10 @@ type Provider string
 
 const (
 	ProviderOllama Provider = "ollama"
+	ProviderOpenAI Provider = "openai"
+	ProviderAzure  Provider = "azure"
+	ProviderGemini Provider = "gemini"
+	ProviderAnthropic Provider = "anthropic"
 )
 
 func NewAdapter(provider Provider, model, baseURL string) (chat.Adapter, error) {
