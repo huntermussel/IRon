@@ -8,8 +8,9 @@ import (
 )
 
 func looksLikeHTML(s string) bool {
-	low := strings.ToLower(s)
-	return strings.Contains(low, "<html") || strings.Contains(low, "<div") || strings.Contains(low, "<body") || strings.Contains(low, "<section")
+	// Simple heuristic: has angle brackets.
+	// We rely on htmlToEmmet failing if it's not valid.
+	return strings.Contains(s, "<") && strings.Contains(s, ">")
 }
 
 func looksLikeEmmet(s string) bool {

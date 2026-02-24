@@ -16,7 +16,7 @@ func init() {
 type EmmetBridge struct{}
 
 func (EmmetBridge) ID() string    { return "emmet_bridge" }
-func (EmmetBridge) Priority() int { return 95 }
+func (EmmetBridge) Priority() int { return 88 }
 
 func (EmmetBridge) ShouldLoad(_ context.Context, e *mw.Event) bool {
 	if e == nil || e.Context == nil {
@@ -36,17 +36,23 @@ func (EmmetBridge) OnEvent(_ context.Context, e *mw.Event) (mw.Decision, error) 
 	switch e.Name {
 	case mw.EventBeforeLLMRequest:
 		html := strings.TrimSpace(e.UserText)
-		if !looksLikeHTML(html) {
-			return mw.Decision{}, nil
+		if looksLikeHTML(html) {
+			emmet := htmlToEmmet(html)
+			if emmet != "" {
+				prompt := "if HTML respond in Emmet only" + emmet
+				return mw.Decision{
+					ReplaceText: &prompt,
+					Reason:      "emmet_bridge: html→emmet",
+				}, nil
+			}
 		}
-		emmet := htmlToEmmet(html)
-		if emmet == "" {
-			return mw.Decision{}, nil
-		}
-		prompt := "if HTML respond in Emmet only" + emmet
+
+		// Fallback: If not converting input HTML, still instruct the LLM to output Emmet.
+		// We append this to the user text so the LLM knows the constraint.
+		prompt := e.UserText + " [SYSTEM: If generating HTML, output ONLY Emmet syntax. Do not use standard HTML tags.]"
 		return mw.Decision{
 			ReplaceText: &prompt,
-			Reason:      "emmet_bridge: html→emmet",
+			Reason:      "emmet_bridge: injected prompt",
 		}, nil
 
 	case mw.EventAfterLLMResponse:

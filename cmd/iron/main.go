@@ -53,6 +53,22 @@ func main() {
 		service = chat.NewService(adapter)
 	}
 
+	// CLI Mode: If arguments are provided, treat them as a single prompt.
+	if len(os.Args) > 1 {
+		input := strings.Join(os.Args[1:], " ")
+		turnCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+		defer cancel()
+
+		assistant, err := service.Send(turnCtx, input)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Println(assistant)
+		return
+	}
+
+	// Interactive Mode
 	fmt.Println("IRon chat (LangChain Go + Ollama)")
 	fmt.Printf("model=%s (set IRON_MODEL), ollama_url=%s\n", model, valueOrDefault(baseURL, "http://localhost:11434"))
 	fmt.Println("Type /exit to quit, /clear to reset context.")
