@@ -3,6 +3,7 @@ package chat
 import (
 	"context"
 	"errors"
+	"iron/internal/memory"
 	"iron/internal/middleware"
 	"strings"
 )
@@ -11,6 +12,7 @@ type Service struct {
 	adapter Adapter
 	history []Message
 	mws     *middleware.Chain
+	mem     *memory.Store
 }
 
 type ServiceOption func(*Service)
@@ -21,10 +23,17 @@ func WithMiddlewareChain(chain *middleware.Chain) ServiceOption {
 	}
 }
 
+func WithMemoryStore(mem *memory.Store) ServiceOption {
+	return func(s *Service) {
+		s.mem = mem
+	}
+}
+
 func NewService(adapter Adapter, opts ...ServiceOption) *Service {
 	s := &Service{
 		adapter: adapter,
 		history: make([]Message, 0, 16),
+		mem:     memory.NewStore(),
 	}
 	for _, opt := range opts {
 		opt(s)
@@ -42,17 +51,30 @@ func (s *Service) SendWithContext(ctx context.Context, input string, mwCtx map[s
 		return "", errors.New("empty input")
 	}
 
+	// Trim history to reduce tokens (keep last 8 messages).
+	if len(s.history) > 8 {
+		s.history = append([]Message{}, s.history[len(s.history)-8:]...)
+	}
+
+	// Retrieve lightweight IR snippets to prepend as context.
+	inputWithContext := input
+	if s.mem != nil {
+		if hits := s.mem.Query("default", input, 2); len(hits) > 0 {
+			inputWithContext = "Context:\n- " + strings.Join(hits, "\n- ") + "\n\n" + input
+		}
+	}
+
 	if s.mws != nil {
 		e := &middleware.Event{
 			Name:     middleware.EventBeforeLLMRequest,
-			UserText: input,
+			UserText: inputWithContext,
 			Context:  mwCtx,
 		}
 		results, err := s.mws.Dispatch(ctx, e)
 		if err != nil {
 			return "", err
 		}
-		updated, canceled := applyTextDecisions(input, results)
+		updated, canceled := applyTextDecisions(inputWithContext, results)
 		if canceled != nil && canceled.Cancel {
 			if strings.TrimSpace(updated) != "" {
 				return updated, nil
@@ -62,11 +84,14 @@ func (s *Service) SendWithContext(ctx context.Context, input string, mwCtx map[s
 			}
 			return "", errors.New(canceled.Reason)
 		}
-		input = updated
+		inputWithContext = updated
 	}
 
-	s.history = append(s.history, Message{Role: RoleUser, Content: input})
-	assistant, err := s.adapter.Reply(ctx, s.history)
+	s.history = append(s.history, Message{Role: RoleUser, Content: inputWithContext})
+	var streamed strings.Builder
+	assistant, toolCalls, err := s.adapter.ReplyStream(ctx, s.history, func(chunk string) {
+		streamed.WriteString(chunk)
+	})
 	if err != nil {
 		s.history = s.history[:len(s.history)-1]
 		return "", err
@@ -80,9 +105,19 @@ func (s *Service) SendWithContext(ctx context.Context, input string, mwCtx map[s
 	if s.mws != nil {
 		e := &middleware.Event{
 			Name:     middleware.EventAfterLLMResponse,
-			UserText: input,
+			UserText: inputWithContext,
 			LLMText:  assistant,
 			Context:  mwCtx,
+		}
+		if len(toolCalls) > 0 {
+			tc := make([]middleware.ToolCall, 0, len(toolCalls))
+			for _, c := range toolCalls {
+				tc = append(tc, middleware.ToolCall{Tool: c.Name, Args: map[string]any{"raw": c.Arguments}})
+			}
+			if e.Context == nil {
+				e.Context = map[string]any{}
+			}
+			e.Context["tool_calls"] = tc
 		}
 		results, err := s.mws.Dispatch(ctx, e)
 		if err != nil {
@@ -106,6 +141,12 @@ func (s *Service) SendWithContext(ctx context.Context, input string, mwCtx map[s
 	}
 
 	s.history = append(s.history, Message{Role: RoleAssistant, Content: assistant})
+
+	// Index compact traces for future retrieval.
+	if s.mem != nil {
+		s.mem.Index("default", inputWithContext)
+		s.mem.Index("default", assistant)
+	}
 	return assistant, nil
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"iron/internal/chat"
+
 	"github.com/tmc/langchaingo/llms"
 	"github.com/tmc/langchaingo/llms/ollama"
 )
@@ -26,7 +27,7 @@ func NewOllamaAdapter(model, baseURL string) (chat.Adapter, error) {
 	return &OllamaAdapter{client: client, model: model}, nil
 }
 
-func (a *OllamaAdapter) Reply(ctx context.Context, history []chat.Message) (string, error) {
+func (a *OllamaAdapter) ReplyStream(ctx context.Context, history []chat.Message, streamFn func(string)) (string, []chat.ToolCall, error) {
 	messages := make([]llms.MessageContent, 0, len(history))
 	for _, m := range history {
 		switch m.Role {
@@ -37,12 +38,17 @@ func (a *OllamaAdapter) Reply(ctx context.Context, history []chat.Message) (stri
 		}
 	}
 
-	resp, err := a.client.GenerateContent(ctx, messages, llms.WithModel(a.model))
+	resp, err := a.client.GenerateContent(ctx, messages, llms.WithModel(a.model), llms.WithStreamingFunc(func(_ context.Context, chunk []byte) error {
+		if streamFn != nil {
+			streamFn(string(chunk))
+		}
+		return nil
+	}))
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	if len(resp.Choices) == 0 {
-		return "", fmt.Errorf("empty response from model")
+		return "", nil, fmt.Errorf("empty response from model")
 	}
-	return resp.Choices[0].Content, nil
+	return resp.Choices[0].Content, nil, nil
 }
