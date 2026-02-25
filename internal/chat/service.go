@@ -2,6 +2,7 @@ package chat
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"iron/internal/memory"
 	"iron/internal/middleware"
@@ -64,11 +65,16 @@ func (s *Service) SendWithContext(ctx context.Context, input string, mwCtx map[s
 		}
 	}
 
+	var llmParams *middleware.LLMParams
 	if s.mws != nil {
+		if mwCtx == nil {
+			mwCtx = map[string]any{}
+		}
 		e := &middleware.Event{
 			Name:     middleware.EventBeforeLLMRequest,
 			UserText: inputWithContext,
 			Context:  mwCtx,
+			Params:   &middleware.LLMParams{},
 		}
 		results, err := s.mws.Dispatch(ctx, e)
 		if err != nil {
@@ -85,11 +91,13 @@ func (s *Service) SendWithContext(ctx context.Context, input string, mwCtx map[s
 			return "", errors.New(canceled.Reason)
 		}
 		inputWithContext = updated
+		mwCtx = e.Context
+		llmParams = e.Params
 	}
 
 	s.history = append(s.history, Message{Role: RoleUser, Content: inputWithContext})
 	var streamed strings.Builder
-	assistant, toolCalls, err := s.adapter.ReplyStream(ctx, s.history, func(chunk string) {
+	assistant, toolCalls, err := s.adapter.ReplyStream(ctx, s.history, llmParams, func(chunk string) {
 		streamed.WriteString(chunk)
 	})
 	if err != nil {
@@ -112,7 +120,7 @@ func (s *Service) SendWithContext(ctx context.Context, input string, mwCtx map[s
 		if len(toolCalls) > 0 {
 			tc := make([]middleware.ToolCall, 0, len(toolCalls))
 			for _, c := range toolCalls {
-				tc = append(tc, middleware.ToolCall{Tool: c.Name, Args: map[string]any{"raw": c.Arguments}})
+				tc = append(tc, middleware.ToolCall{Tool: c.Name, Args: parseToolArgs(c.Arguments)})
 			}
 			if e.Context == nil {
 				e.Context = map[string]any{}
@@ -152,6 +160,21 @@ func (s *Service) SendWithContext(ctx context.Context, input string, mwCtx map[s
 
 func (s *Service) Clear() {
 	s.history = s.history[:0]
+}
+
+func parseToolArgs(raw string) map[string]any {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return map[string]any{}
+	}
+	var m map[string]any
+	if err := json.Unmarshal([]byte(raw), &m); err != nil {
+		return map[string]any{"raw": raw}
+	}
+	if m == nil {
+		return map[string]any{}
+	}
+	return m
 }
 
 func applyTextDecisions(initial string, results []middleware.DecisionResult) (string, *middleware.Decision) {

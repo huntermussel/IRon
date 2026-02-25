@@ -4,81 +4,222 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"regexp"
+	"strings"
 
-	"iron/internal/middleware"
+	mw "iron/internal/middleware"
 	"iron/internal/nlu"
 )
 
-// AlarmMiddleware handles alarm setting requests.
-type AlarmMiddleware struct {
-	nluEngine *nlu.Engine
-}
-
 func init() {
-	middleware.Register(New())
+	registerIntents()
+	mw.Register(AlarmDeterministic{})
+	mw.Register(AlarmMode{})
+	mw.Register(AlarmExec{})
 }
 
-func New() *AlarmMiddleware {
+/*
+Policy:
+- confidence < 50  : do nothing
+- 50..79           : expose tool alarm.set, LLM decides (tool_choice auto)
+- >= 80            : deterministic (cancel; do not call LLM)
+*/
+
+const (
+	alarmLow  = 50
+	alarmHigh = 80
+)
+
+const (
+	ctxNLUIntent     = "nlu_intent"
+	ctxNLUConfidence = "nlu_confidence"
+	ctxNLUSlots      = "nlu_slots"
+)
+
+func registerIntents() {
 	engine := nlu.GetEngine()
-	// Register structured utterances for this intent
-	engine.RegisterIntent("set_alarm",
+	engine.RegisterIntent(
+		"set_alarm",
 		"set alarm for {time}",
 		"set an alarm for {time}",
 		"wake me up at {time}",
 		"wake me up {time}",
 		"create alarm for {time}",
-		"alarm {time}",
-		"at {time} I'll {action}",
+		"alarm at {time}",
+		"set alarm at {time}",
 	)
+}
 
-	return &AlarmMiddleware{
-		nluEngine: engine,
+func ensureContext(e *mw.Event) {
+	if e.Context == nil {
+		e.Context = map[string]any{}
 	}
 }
 
-func (m *AlarmMiddleware) ID() string {
-	return "alarm"
-}
-
-func (m *AlarmMiddleware) Priority() int {
-	return 100
-}
-
-// ShouldLoad checks if the input matches the alarm intent using the shared NLU engine.
-func (m *AlarmMiddleware) ShouldLoad(ctx context.Context, e *middleware.Event) bool {
-	if e.Name != middleware.EventBeforeLLMRequest {
-		return false
+func getAlarmNLU(e *mw.Event) (intent string, confidence int, slots map[string]string) {
+	if e == nil {
+		return "", 0, nil
+	}
+	ensureContext(e)
+	if v, ok := e.Context[ctxNLUIntent].(string); ok && v != "" {
+		intent = v
+	}
+	if v, ok := e.Context[ctxNLUConfidence].(int); ok {
+		confidence = v
+	}
+	if v, ok := e.Context[ctxNLUSlots].(map[string]string); ok {
+		slots = v
+	}
+	if intent != "" || confidence != 0 || slots != nil {
+		return intent, confidence, slots
 	}
 
-	result := m.nluEngine.Parse(e.UserText)
-	return result.Intent == "set_alarm"
-}
-
-func (m *AlarmMiddleware) OnEvent(ctx context.Context, e *middleware.Event) (middleware.Decision, error) {
-	// Parse again to get the result (or we could cache it in Context if we wanted optimization)
-	result := m.nluEngine.Parse(e.UserText)
-
-	timeStr := "unknown time"
-	if t, ok := result.Slots["time"]; ok {
-		timeStr = t
+	parsed := nlu.GetEngine().Parse(e.UserText)
+	if parsed.Intent == "set_alarm" && parsed.Confidence > 0 {
+		intent = "set_alarm"
+		confidence = 100
+		slots = parsed.Slots
+		e.Context[ctxNLUIntent] = intent
+		e.Context[ctxNLUConfidence] = confidence
+		e.Context[ctxNLUSlots] = slots
+		return intent, confidence, slots
 	}
 
-	respData := map[string]any{
+	intent, confidence, slots = alarmHeuristic(e.UserText)
+	e.Context[ctxNLUIntent] = intent
+	e.Context[ctxNLUConfidence] = confidence
+	e.Context[ctxNLUSlots] = slots
+	return intent, confidence, slots
+}
+
+var (
+	reTimeHHMM = regexp.MustCompile(`(?i)\b([01]?\d|2[0-3]):[0-5]\d\b`)
+	reTimeAmPm = regexp.MustCompile(`(?i)\b(1[0-2]|0?[1-9])\s*(am|pm)\b`)
+	reAfterAt  = regexp.MustCompile(`(?i)\b(?:at|for)\s+(.+)$`)
+)
+
+func alarmHeuristic(input string) (intent string, confidence int, slots map[string]string) {
+	s := strings.ToLower(strings.TrimSpace(input))
+	if s == "" {
+		return "", 0, nil
+	}
+
+	alarmLike := strings.Contains(s, "alarm") ||
+		strings.Contains(s, "wake me up") ||
+		strings.Contains(s, "set an alarm") ||
+		strings.Contains(s, "set alarm") ||
+		strings.Contains(s, "alarme") ||
+		strings.Contains(s, "acorda") ||
+		strings.Contains(s, "despert")
+
+	if !alarmLike {
+		return "", 0, nil
+	}
+
+	intent = "set_alarm"
+	confidence = 60
+	slots = map[string]string{}
+
+	if m := reTimeHHMM.FindStringSubmatch(input); len(m) >= 1 {
+		slots["time"] = m[0]
+		return intent, confidence, slots
+	}
+	if m := reTimeAmPm.FindStringSubmatch(input); len(m) >= 3 {
+		slots["time"] = strings.TrimSpace(m[1] + m[2])
+		return intent, confidence, slots
+	}
+	if m := reAfterAt.FindStringSubmatch(input); len(m) >= 2 {
+		slots["time"] = strings.TrimSpace(m[1])
+	}
+
+	if len(slots) == 0 {
+		slots = nil
+	}
+	return intent, confidence, slots
+}
+
+/* --------------------- AlarmDeterministic (before_llm_request) --------------------- */
+
+type AlarmDeterministic struct{}
+
+func (AlarmDeterministic) ID() string    { return "alarm_deterministic" }
+func (AlarmDeterministic) Priority() int { return 95 }
+
+func (AlarmDeterministic) ShouldLoad(_ context.Context, e *mw.Event) bool {
+	return e != nil && e.Name == mw.EventBeforeLLMRequest
+}
+
+func (AlarmDeterministic) OnEvent(_ context.Context, e *mw.Event) (mw.Decision, error) {
+	if e == nil || e.Name != mw.EventBeforeLLMRequest {
+		return mw.Decision{}, nil
+	}
+
+	intent, conf, slots := getAlarmNLU(e)
+	if intent != "set_alarm" || conf < alarmHigh {
+		return mw.Decision{}, nil
+	}
+
+	timeStr := "unknown"
+	if slots != nil && strings.TrimSpace(slots["time"]) != "" {
+		timeStr = slots["time"]
+	}
+
+	resp := map[string]any{
 		"action":  "set_alarm",
 		"time":    timeStr,
 		"status":  "success",
 		"message": fmt.Sprintf("Alarm set for %s.", timeStr),
 	}
-
-	jsonBytes, err := json.Marshal(respData)
+	b, err := json.Marshal(resp)
 	if err != nil {
-		return middleware.Decision{}, err
+		return mw.Decision{}, err
+	}
+	s := string(b)
+
+	return mw.Decision{
+		Cancel:      true,
+		ReplaceText: &s,
+		Reason:      "alarm_deterministic: high-confidence; handled locally",
+	}, nil
+}
+
+/* --------------------------- AlarmMode (filter) --------------------------- */
+
+type AlarmMode struct{}
+
+func (AlarmMode) ID() string    { return "alarm_mode" }
+func (AlarmMode) Priority() int { return 90 }
+
+func (AlarmMode) ShouldLoad(_ context.Context, e *mw.Event) bool {
+	return e != nil && e.Name == mw.EventBeforeLLMRequest
+}
+
+func (AlarmMode) OnEvent(_ context.Context, e *mw.Event) (mw.Decision, error) {
+	if e == nil || e.Name != mw.EventBeforeLLMRequest {
+		return mw.Decision{}, nil
 	}
 
-	respStr := string(jsonBytes)
-	return middleware.Decision{
-		Cancel:      true,
-		ReplaceText: &respStr,
-		Reason:      "alarm: handled locally via NLU match",
+	intent, conf, _ := getAlarmNLU(e)
+	if intent != "set_alarm" {
+		return mw.Decision{}, nil
+	}
+
+	if conf < alarmLow || conf >= alarmHigh {
+		return mw.Decision{}, nil
+	}
+
+	params := &mw.LLMParams{}
+	if e.Params != nil {
+		*params = *e.Params
+	}
+
+	params.Tools = upsertTool(params.Tools, AlarmSetTool())
+	if params.ToolChoice == nil {
+		params.ToolChoice = "auto"
+	}
+
+	return mw.Decision{
+		OverrideParams: params,
+		Reason:         "alarm_mode: mid-confidence; tool enabled; LLM decides",
 	}, nil
 }
