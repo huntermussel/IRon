@@ -5,6 +5,7 @@ import (
 	_ "iron/middlewares/alarm"
 	_ "iron/middlewares/calendar"
 	_ "iron/middlewares/codingtools"
+	_ "iron/middlewares/cron"
 	_ "iron/middlewares/device"
 	_ "iron/middlewares/email"
 	_ "iron/middlewares/emmetbridge"

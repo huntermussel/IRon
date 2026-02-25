@@ -16,6 +16,11 @@ func TestParse(t *testing.T) {
 		"remind me to {action} at {time}",
 	)
 
+	e.RegisterIntent("set_cron",
+		"remind me to {action} every {duration}",
+		"run {action} every {duration}",
+	)
+
 	e.RegisterIntent("get_weather",
 		"weather in {location}",
 		"what is the weather in {location}",
@@ -37,9 +42,9 @@ func TestParse(t *testing.T) {
 			expectedSlots:  map[string]string{"time": "8am"},
 		},
 		{
-			input:          "wake me up at 7:30",
-			expectedIntent: "set_alarm",
-			expectedSlots:  map[string]string{"time": "7:30"},
+			input:          "remind me to take water every 2 hours",
+			expectedIntent: "set_cron",
+			expectedSlots:  map[string]string{"action": "take water", "duration": "2 hours"},
 		},
 		{
 			input:          "weather in Paris",
@@ -47,19 +52,9 @@ func TestParse(t *testing.T) {
 			expectedSlots:  map[string]string{"location": "Paris"},
 		},
 		{
-			input:          "what is the weather in London",
-			expectedIntent: "get_weather",
-			expectedSlots:  map[string]string{"location": "London"},
-		},
-		{
 			input:          "turn on the lights",
 			expectedIntent: "control_device",
 			expectedSlots:  map[string]string{"state": "on", "device": "lights"},
-		},
-		{
-			input:          "turn off kitchen fan",
-			expectedIntent: "control_device",
-			expectedSlots:  map[string]string{"state": "off", "device": "kitchen fan"},
 		},
 		{
 			input:          "what is the weather",

@@ -12,6 +12,7 @@ IRon is a minimal Go 1.22 CLI chat app that layers a middleware “plugin” sys
 - `internal/memory/` – tiny KV + lexical retriever to keep prompts short.
 - `middlewares/` – auto-loaded plugins:
   - `alarm`: Handles "set alarm for {time}" intents.
+  - `cron`: Handles "remind me to {action} every {duration}" intents.
   - `weather`: Handles "weather in {location}" intents.
   - `device`: Handles "turn {state} {device}" intents.
   - [greeting](middlewares/greeting/README.md)
@@ -37,7 +38,7 @@ Middleware debug log is always written to `bin/middleware.debug.jsonl`.
 
 ## Middleware at a Glance
 
-- **NLU Tools (Alarm, Weather, Device):** Deterministically handle specific commands using template matching, bypassing the LLM for speed and reliability.
+- **NLU Tools (Alarm, Weather, Device, Cron):** Deterministically handle specific commands using template matching, bypassing the LLM for speed and reliability.
 - **Greeting:** Short-circuits simple salutations.
 - **Trash Cleaner:** Drops filler/stopwords while keeping technical tokens.
 - **Intent Compressor:** Emits short intent labels/qualifiers.
