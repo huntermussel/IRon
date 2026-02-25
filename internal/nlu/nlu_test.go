@@ -22,6 +22,7 @@ func TestParse(t *testing.T) {
 		"{action} every {duration}",
 		"{action} {count} times per {unit}",
 		"{action} {count} time per {unit}",
+		"on {duration} {action}",
 	)
 
 	e.RegisterIntent("get_weather",
@@ -58,6 +59,11 @@ func TestParse(t *testing.T) {
 			input:          "search 1 time per week",
 			expectedIntent: "set_cron",
 			expectedSlots:  map[string]string{"action": "search", "count": "1", "unit": "week"},
+		},
+		{
+			input:          "on mondays backup database",
+			expectedIntent: "set_cron",
+			expectedSlots:  map[string]string{"action": "backup database", "duration": "mondays"},
 		},
 		{
 			input:          "weather in Paris",

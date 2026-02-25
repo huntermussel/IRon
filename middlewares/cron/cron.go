@@ -32,6 +32,7 @@ func New() *CronMiddleware {
 		"{action} every {duration}",         // e.g. "search every hour"
 		"{action} {count} times per {unit}", // e.g. "search 1 time per week"
 		"{action} {count} time per {unit}",
+		"on {duration} {action}", // e.g. "on mondays backup database"
 	)
 
 	return &CronMiddleware{
@@ -108,6 +109,23 @@ func (m *CronMiddleware) OnEvent(ctx context.Context, e *middleware.Event) (midd
 // parseDurationToCron converts natural language duration to basic cron syntax.
 func parseDurationToCron(duration string) string {
 	duration = strings.ToLower(duration)
+
+	// Handle days of the week
+	days := map[string]string{
+		"sunday":    "0",
+		"monday":    "1",
+		"tuesday":   "2",
+		"wednesday": "3",
+		"thursday":  "4",
+		"friday":    "5",
+		"saturday":  "6",
+	}
+	// Check for plural forms first e.g. "mondays"
+	for day, val := range days {
+		if strings.Contains(duration, day) {
+			return fmt.Sprintf("0 0 * * %s", val) // At midnight on that day
+		}
+	}
 
 	// Handle explicit "times per" pattern
 	if strings.Contains(duration, "times per") || strings.Contains(duration, "time per") {

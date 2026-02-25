@@ -25,8 +25,10 @@ func New() *AlarmMiddleware {
 		"set alarm for {time}",
 		"set an alarm for {time}",
 		"wake me up at {time}",
+		"wake me up {time}",
 		"create alarm for {time}",
-		"alarm {time}", // e.g. "alarm 8am" - might be too greedy?
+		"alarm {time}",
+		"at {time} I'll {action}",
 	)
 
 	return &AlarmMiddleware{
