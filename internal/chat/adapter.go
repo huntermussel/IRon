@@ -15,6 +15,7 @@ type Adapter interface {
 
 // ToolCall mirrors llms.ToolCall but keeps adapter decoupled.
 type ToolCall struct {
+	ID        string // Unique ID for this call (e.g. call_123)
 	Name      string
 	Arguments string
 }

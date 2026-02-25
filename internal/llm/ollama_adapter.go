@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"iron/internal/chat"
 	"iron/internal/middleware"
-
+	"os"
 	"github.com/tmc/langchaingo/llms"
 	"github.com/tmc/langchaingo/llms/ollama"
 )
@@ -35,7 +35,53 @@ func (a *OllamaAdapter) ReplyStream(ctx context.Context, history []chat.Message,
 		case chat.RoleUser:
 			messages = append(messages, llms.TextParts(llms.ChatMessageTypeHuman, m.Content))
 		case chat.RoleAssistant:
-			messages = append(messages, llms.TextParts(llms.ChatMessageTypeAI, m.Content))
+			// Reconstruct Assistant message with ToolCalls if present
+			var parts []llms.ContentPart
+			if m.Content != "" {
+				parts = append(parts, llms.TextPart(m.Content))
+			}
+			for _, tc := range m.ToolCalls {
+				parts = append(parts, llms.ToolCall{
+					ID:   tc.ID,
+					Type: "function",
+					FunctionCall: &llms.FunctionCall{
+						Name:      tc.Name,
+						Arguments: tc.Arguments,
+					},
+				})
+			}
+			// If both empty, add a space to avoid error
+			if len(parts) == 0 {
+				parts = append(parts, llms.TextPart(" "))
+			}
+			messages = append(messages, llms.MessageContent{
+				Role:  llms.ChatMessageTypeAI,
+				Parts: parts,
+			})
+
+		case chat.RoleSystem:
+			messages = append(messages, llms.TextParts(llms.ChatMessageTypeSystem, m.Content))
+		case chat.RoleTool:
+			// Tool results must be linked to a ToolCall ID.
+			// `langchaingo` generic message content supports `ChatMessageTypeTool`.
+			// The content part should be a ToolResultPart or similar if available,
+			// but generic interface uses `TextParts`.
+			// However, `llms.MessageContent` has a `Parts` slice.
+			// We can construct a `ToolCallResponse` part if supported, or just text with ID if the provider supports it.
+			// For Ollama/OpenAI via langchaingo, we usually need to set the ToolCallID on the message itself?
+			// Checking `llms` package: `MessageContent` doesn't have ID field directly on struct,
+			// but `ToolCallResponse` part does.
+
+			messages = append(messages, llms.MessageContent{
+				Role: llms.ChatMessageTypeTool,
+				Parts: []llms.ContentPart{
+					llms.ToolCallResponse{
+						ToolCallID: m.ToolCallID,
+						Name:       "", // Optional?
+						Content:    m.Content,
+					},
+				},
+			})
 		}
 	}
 
@@ -54,26 +100,9 @@ func (a *OllamaAdapter) ReplyStream(ctx context.Context, history []chat.Message,
 		if params.MaxTokens != 0 {
 			opts = append(opts, llms.WithMaxTokens(params.MaxTokens))
 		}
-		if params.FrequencyPenalty != 0 {
-			opts = append(opts, llms.WithFrequencyPenalty(params.FrequencyPenalty))
-		}
-		if params.PresencePenalty != 0 {
-			opts = append(opts, llms.WithPresencePenalty(params.PresencePenalty))
-		}
-		if len(params.Stop) > 0 {
-			opts = append(opts, llms.WithStopWords(params.Stop))
-		}
-		if params.Seed != nil {
-			opts = append(opts, llms.WithSeed(*params.Seed))
-		}
+
 		if len(params.Tools) > 0 {
 			opts = append(opts, llms.WithTools(params.Tools))
-		}
-		if params.ToolChoice != nil {
-			opts = append(opts, llms.WithToolChoice(params.ToolChoice))
-		}
-		if len(params.Functions) > 0 {
-			opts = append(opts, llms.WithFunctions(params.Functions))
 		}
 	}
 	opts = append(opts, llms.WithStreamingFunc(func(_ context.Context, chunk []byte) error {
@@ -90,5 +119,20 @@ func (a *OllamaAdapter) ReplyStream(ctx context.Context, history []chat.Message,
 	if len(resp.Choices) == 0 {
 		return "", nil, fmt.Errorf("empty response from model")
 	}
-	return resp.Choices[0].Content, nil, nil
+
+	// Extract tool calls
+	var toolCalls []chat.ToolCall
+	for _, tc := range resp.Choices[0].ToolCalls {
+		toolCalls = append(toolCalls, chat.ToolCall{
+			ID:        tc.ID,
+			Name:      tc.FunctionCall.Name,
+			Arguments: tc.FunctionCall.Arguments,
+		})
+	}
+
+	if len(toolCalls) > 0 {
+		fmt.Fprintf(os.Stderr, "[OllamaAdapter] Model returned %d tool calls\n", len(toolCalls))
+	}
+
+	return resp.Choices[0].Content, toolCalls, nil
 }

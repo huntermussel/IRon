@@ -1,114 +1,96 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"fmt"
-	"io"
-	"iron/internal/chat"
-	"iron/internal/llm"
-	"iron/internal/middleware"
-	_ "iron/middlewares/autoload"
 	"os"
-	"path/filepath"
-	"strings"
-	"time"
+	"os/signal"
+	"syscall"
+
+	"iron/internal/gateway"
+
+	"github.com/spf13/cobra"
+)
+
+var (
+	version = "0.1.0"
+	cfgFile string
 )
 
 func main() {
-	ctx := context.Background()
+	rootCmd := &cobra.Command{
+		Use:   "iron",
+		Short: "IRon — Personal AI Assistant. 🛡️",
+		Long: `
+██╗██████╗  ██████╗ ███╗   ██╗
+██║██╔══██╗██╔═══██╗████╗  ██║
+██║██████╔╝██║   ██║██╔██╗ ██║
+██║██╔══██╗██║   ██║██║╚██╗██║
+██║██║  ██║╚██████╔╝██║ ╚████║
+╚═╝╚═╝  ╚═╝ ╚═════╝ ╚═╝  ╚═══╝
 
-	model := os.Getenv("IRON_MODEL")
-	if model == "" {
-		model = "llama3.2"
+Personal AI Assistant in Go.
+Version: ` + version,
 	}
 
-	provider := llm.Provider(os.Getenv("IRON_PROVIDER"))
-	if provider == "" {
-		provider = llm.ProviderOllama
-	}
+	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default: ~/.iron/config.yaml)")
 
-	baseURL := os.Getenv("IRON_OLLAMA_URL")
-	adapter, err := llm.NewAdapter(provider, model, baseURL)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to initialize ollama client: %v\n", err)
+	rootCmd.AddCommand(
+		chatCmd(),
+		versionCmd(),
+		doctorCmd(),
+	)
+
+	if err := rootCmd.Execute(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
-	}
-
-	// Middleware debug log (JSONL), always on by default.
-	logPath := filepath.Join("bin", "middleware.debug.jsonl")
-	_ = os.MkdirAll(filepath.Dir(logPath), 0o755)
-	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "warning: failed to open middleware log file (%s): %v\n", logPath, err)
-	}
-	var mwLog io.Writer = logFile
-
-	chain := middleware.NewChainFromRegistry(mwLog)
-
-	var service *chat.Service
-	if chain != nil {
-		service = chat.NewService(adapter, chat.WithMiddlewareChain(chain))
-	} else {
-		service = chat.NewService(adapter)
-	}
-
-	// CLI Mode: If arguments are provided, treat them as a single prompt.
-	if len(os.Args) > 1 {
-		input := strings.Join(os.Args[1:], " ")
-		turnCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
-		defer cancel()
-
-		assistant, err := service.Send(turnCtx, input)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "error: %v\n", err)
-			os.Exit(1)
-		}
-		fmt.Println(assistant)
-		return
-	}
-
-	// Interactive Mode
-	fmt.Println("IRon chat (LangChain Go + Ollama)")
-	fmt.Printf("model=%s (set IRON_MODEL), ollama_url=%s\n", model, valueOrDefault(baseURL, "http://localhost:11434"))
-	fmt.Println("Type /exit to quit, /clear to reset context.")
-	fmt.Printf("Middleware debug log: %s\n", logPath)
-
-	scanner := bufio.NewScanner(os.Stdin)
-
-	for {
-		fmt.Print("> ")
-		if !scanner.Scan() {
-			fmt.Println()
-			return
-		}
-		input := strings.TrimSpace(scanner.Text())
-		if input == "" {
-			continue
-		}
-		switch input {
-		case "/exit", "exit", "quit":
-			return
-		case "/clear":
-			service.Clear()
-			fmt.Println("context cleared")
-			continue
-		}
-
-		turnCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
-		assistant, err := service.Send(turnCtx, input)
-		cancel()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "error: %v\n", err)
-			continue
-		}
-		fmt.Println(assistant)
 	}
 }
 
-func valueOrDefault(v, fallback string) string {
-	if strings.TrimSpace(v) == "" {
-		return fallback
+func chatCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "chat",
+		Short: "Start the interactive chat session (default)",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			// Create a gateway (which encapsulates the chat logic)
+			gw := gateway.New()
+
+			// Setup graceful shutdown
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+
+			sigCh := make(chan os.Signal, 1)
+			signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+
+			go func() {
+				<-sigCh
+				fmt.Println("\nReceived signal, shutting down...")
+				cancel()
+			}()
+
+			return gw.Run(ctx)
+		},
 	}
-	return v
+}
+
+func versionCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "version",
+		Short: "Print version",
+		Run: func(cmd *cobra.Command, args []string) {
+			fmt.Printf("IRon %s\n", version)
+		},
+	}
+}
+
+func doctorCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "doctor",
+		Short: "Check configuration and dependencies",
+		Run: func(cmd *cobra.Command, args []string) {
+			fmt.Println("Checking IRon health...")
+			// TODO: Add real checks (Ollama connection, disk space, permissions)
+			fmt.Println("✅ Environment seems OK (Placeholder)")
+		},
+	}
 }
