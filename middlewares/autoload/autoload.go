@@ -16,4 +16,5 @@ import (
 	_ "iron/middlewares/tokenbudget"
 	_ "iron/middlewares/trashcleanner"
 	_ "iron/middlewares/weather"
+	_ "iron/middlewares/notes"
 )
