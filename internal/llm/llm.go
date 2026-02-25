@@ -8,10 +8,10 @@ import (
 type Provider string
 
 const (
-	ProviderOllama Provider = "ollama"
-	ProviderOpenAI Provider = "openai"
-	ProviderAzure  Provider = "azure"
-	ProviderGemini Provider = "gemini"
+	ProviderOllama    Provider = "ollama"
+	ProviderOpenAI    Provider = "openai"
+	ProviderAzure     Provider = "azure"
+	ProviderGemini    Provider = "gemini"
 	ProviderAnthropic Provider = "anthropic"
 )
 

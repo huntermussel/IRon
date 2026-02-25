@@ -1,6 +1,6 @@
 # IRon
 
-IRon is a minimal Go 1.22 CLI chat app that layers a middleware “plugin” system on top of LangChainGo. It includes built-in middlewares for prompt cleaning, greetings, intent compression, token budgeting, coding tool schemas/execution, and a simple IR-based context retriever to trim token usage.
+IRon is a minimal Go 1.22 CLI chat app that layers a middleware “plugin” system on top of LangChainGo. It includes built-in middlewares for NLU-driven intent handling, prompt cleaning, greetings, intent compression, token budgeting, coding tool schemas/execution, and a simple IR-based context retriever to trim token usage.
 
 ## Project Layout
 
@@ -8,8 +8,12 @@ IRon is a minimal Go 1.22 CLI chat app that layers a middleware “plugin” sys
 - `internal/chat/` – chat service (history, middleware dispatch, IR memory trim).
 - `internal/llm/` – provider adapters (Ollama by default).
 - `internal/middleware/` – middleware interfaces, chain, debug log, registry.
+- `internal/nlu/` – Template-based NLU engine for intent matching and entity extraction.
 - `internal/memory/` – tiny KV + lexical retriever to keep prompts short.
-- `middlewares/` – auto-loaded plugins. See per-plugin READMEs:
+- `middlewares/` – auto-loaded plugins:
+  - `alarm`: Handles "set alarm for {time}" intents.
+  - `weather`: Handles "weather in {location}" intents.
+  - `device`: Handles "turn {state} {device}" intents.
   - [greeting](middlewares/greeting/README.md)
   - [trash cleaner](middlewares/trashcleanner/README.md)
   - [intent compressor](middlewares/intentcompressor/README.md)
@@ -33,11 +37,12 @@ Middleware debug log is always written to `bin/middleware.debug.jsonl`.
 
 ## Middleware at a Glance
 
-- Greeting short-circuits simple salutations.
-- Trash cleaner drops filler/stopwords while keeping technical tokens.
-- Intent compressor emits short intent labels/qualifiers.
-- Token budget caps `MaxTokens` when provided.
-- Coding tools inject tool schemas and execute ls/mkdir/find/diff/pwd/read/write when tool calls are supplied.
+- **NLU Tools (Alarm, Weather, Device):** Deterministically handle specific commands using template matching, bypassing the LLM for speed and reliability.
+- **Greeting:** Short-circuits simple salutations.
+- **Trash Cleaner:** Drops filler/stopwords while keeping technical tokens.
+- **Intent Compressor:** Emits short intent labels/qualifiers.
+- **Token Budget:** Caps `MaxTokens` when provided.
+- **Coding Tools:** Inject tool schemas and execute ls/mkdir/find/diff/pwd/read/write when tool calls are supplied.
 
 ## IR Token Memory
 
