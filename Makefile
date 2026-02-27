@@ -6,10 +6,14 @@ CMD     := ./cmd/iron
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 LDFLAGS := -ldflags "-X main.version=$(VERSION) -s -w"
 
-.PHONY: all build build-all run test lint clean proto install docker
+.PHONY: all build build-all run test lint clean proto install docker build-ui
+
+## ── Web UI ──────────────────────────────────────────────────────────────────
+build-ui:
+	cd ui && npm install && npm run build
 
 ## ── Local build ─────────────────────────────────────────────────────────────
-build:
+build: build-ui
 	go build $(LDFLAGS) -o bin/$(APP) $(CMD)
 
 run: build
@@ -20,7 +24,7 @@ install: build
 	@echo "✅ Installed to $(GOPATH)/bin/$(APP)"
 
 ## ── Cross-platform builds ───────────────────────────────────────────────────
-build-all: \
+build-all: build-ui \
 	dist/$(APP)-darwin-arm64 \
 	dist/$(APP)-darwin-amd64 \
 	dist/$(APP)-linux-amd64 \
