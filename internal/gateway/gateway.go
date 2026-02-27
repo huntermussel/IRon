@@ -15,31 +15,75 @@ import (
 	"iron/internal/llm"
 	"iron/internal/memory"
 	"iron/internal/middleware"
+	"iron/internal/onboarding"
 	"iron/internal/skills"
 	_ "iron/middlewares/autoload" // Auto-load all middlewares
+
+	"github.com/joho/godotenv"
 )
 
 type Gateway struct {
-	// Config if we had a struct, for now using env/defaults
+	ConfigPath string
 }
 
-func New() *Gateway {
-	return &Gateway{}
+func New(configPath string) *Gateway {
+	return &Gateway{ConfigPath: configPath}
 }
 
 func (g *Gateway) Run(ctx context.Context) error {
+	// Load environment variables from .env if present
+	_ = godotenv.Load()
+
+	// Default values
+	model := "llama3.2"
+	provider := llm.ProviderOllama
+	baseURL := ""
+	apiKey := ""
+
+	// Load from config file if available
+	if g.ConfigPath != "" {
+		if cfg, err := onboarding.LoadFromFile(g.ConfigPath); err == nil {
+			model = cfg.Model
+			provider = llm.Provider(cfg.Provider)
+			baseURL = cfg.BaseURL
+			apiKey = cfg.APIKey
+
+			// Apply middleware settings
+			var disabled []string
+			for _, m := range cfg.Middlewares {
+				if !m.Enabled {
+					disabled = append(disabled, m.ID)
+				}
+				for k, v := range m.EnvVars {
+					if v != "" {
+						os.Setenv(k, v)
+					}
+				}
+			}
+			if len(disabled) > 0 {
+				os.Setenv("IRON_DISABLED_MIDDLEWARES", strings.Join(disabled, ","))
+			}
+		}
+	}
+
+	// Environment variables override config file
+	if m := os.Getenv("IRON_MODEL"); m != "" {
+		model = m
+	}
+	if p := os.Getenv("IRON_PROVIDER"); p != "" {
+		provider = llm.Provider(p)
+	}
+	if u := os.Getenv("IRON_OLLAMA_URL"); u != "" {
+		baseURL = u
+	}
+	if apiKey != "" {
+		keyVar := "IRON_" + strings.ToUpper(string(provider)) + "_API_KEY"
+		if os.Getenv(keyVar) == "" {
+			os.Setenv(keyVar, apiKey)
+		}
+	}
+
 	// 1. Initialize Components
-	model := os.Getenv("IRON_MODEL")
-	if model == "" {
-		model = "llama3.2"
-	}
-
-	provider := llm.Provider(os.Getenv("IRON_PROVIDER"))
-	if provider == "" {
-		provider = llm.ProviderOllama
-	}
-
-	baseURL := os.Getenv("IRON_OLLAMA_URL")
 	adapter, err := llm.NewAdapter(provider, model, baseURL)
 	if err != nil {
 		return fmt.Errorf("failed to initialize adapter: %w", err)

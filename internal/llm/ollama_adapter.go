@@ -3,11 +3,11 @@ package llm
 import (
 	"context"
 	"fmt"
+	"github.com/tmc/langchaingo/llms"
+	"github.com/tmc/langchaingo/llms/ollama"
 	"iron/internal/chat"
 	"iron/internal/middleware"
 	"os"
-	"github.com/tmc/langchaingo/llms"
-	"github.com/tmc/langchaingo/llms/ollama"
 )
 
 type OllamaAdapter struct {

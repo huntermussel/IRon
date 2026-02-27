@@ -1,6 +1,10 @@
 package middleware
 
-import "io"
+import (
+	"io"
+	"os"
+	"strings"
+)
 
 // registry holds globally-registered middleware plugins.
 var registry []Middleware
@@ -22,6 +26,23 @@ func Registered() []Middleware {
 // If a debug writer is provided, it is attached for JSONL debug logs.
 func NewChainFromRegistry(debugWriter io.Writer) *Chain {
 	mws := Registered()
+
+	// Filter out disabled middlewares via IRON_DISABLED_MIDDLEWARES env var.
+	if disabled := os.Getenv("IRON_DISABLED_MIDDLEWARES"); disabled != "" {
+		disabledSet := make(map[string]struct{})
+		for _, id := range strings.Split(disabled, ",") {
+			disabledSet[strings.TrimSpace(id)] = struct{}{}
+		}
+
+		filtered := make([]Middleware, 0, len(mws))
+		for _, mw := range mws {
+			if _, ok := disabledSet[mw.ID()]; !ok {
+				filtered = append(filtered, mw)
+			}
+		}
+		mws = filtered
+	}
+
 	if len(mws) == 0 {
 		return nil
 	}

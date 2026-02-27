@@ -12,9 +12,10 @@ import (
 	_ "iron/middlewares/greeting"
 	_ "iron/middlewares/intentcompressor"
 	_ "iron/middlewares/localcache"
+	_ "iron/middlewares/notes"
+	_ "iron/middlewares/pytools"
 	_ "iron/middlewares/slack"
 	_ "iron/middlewares/tokenbudget"
 	_ "iron/middlewares/trashcleanner"
 	_ "iron/middlewares/weather"
-	_ "iron/middlewares/notes"
 )

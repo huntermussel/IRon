@@ -8,6 +8,7 @@ import (
 	"syscall"
 
 	"iron/internal/gateway"
+	"iron/internal/onboarding"
 
 	"github.com/spf13/cobra"
 )
@@ -33,10 +34,11 @@ Personal AI Assistant in Go.
 Version: ` + version,
 	}
 
-	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default: ~/.iron/config.yaml)")
+	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "~/.iron/config.json", "config file (default: ~/.iron/config.json)")
 
 	rootCmd.AddCommand(
 		chatCmd(),
+		onboardCmd(),
 		versionCmd(),
 		doctorCmd(),
 	)
@@ -53,7 +55,7 @@ func chatCmd() *cobra.Command {
 		Short: "Start the interactive chat session (default)",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// Create a gateway (which encapsulates the chat logic)
-			gw := gateway.New()
+			gw := gateway.New(cfgFile)
 
 			// Setup graceful shutdown
 			ctx, cancel := context.WithCancel(context.Background())
@@ -91,6 +93,19 @@ func doctorCmd() *cobra.Command {
 			fmt.Println("Checking IRon health...")
 			// TODO: Add real checks (Ollama connection, disk space, permissions)
 			fmt.Println("✅ Environment seems OK (Placeholder)")
+		},
+	}
+}
+
+func onboardCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "onboard",
+		Short: "Run the interactive onboarding wizard",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := onboarding.RunTUI(); err != nil {
+				return fmt.Errorf("onboarding failed: %w", err)
+			}
+			return nil
 		},
 	}
 }
