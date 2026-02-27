@@ -11,6 +11,7 @@ import {
   Send,
 } from "lucide-react";
 import { marked } from "marked";
+import { Routes, Route, NavLink, Navigate } from "react-router-dom";
 
 // --- Types ---
 interface Config {
@@ -33,9 +34,6 @@ interface Status {
 
 export default function App() {
   // --- State ---
-  const [activeTab, setActiveTab] = useState<"dashboard" | "chat" | "settings">(
-    "dashboard",
-  );
   const [status, setStatus] = useState<Status>({ isOnline: false, time: "" });
   const [config, setConfig] = useState<Config>({
     provider: "ollama",
@@ -504,28 +502,46 @@ export default function App() {
         <nav className="flex-1 py-4">
           <ul className="space-y-1">
             <li>
-              <button
-                onClick={() => setActiveTab("dashboard")}
-                className={`w-full text-left px-6 py-3 flex items-center transition-colors ${activeTab === "dashboard" ? "bg-gray-700 border-l-4 border-blue-500" : "hover:bg-gray-700 border-l-4 border-transparent"}`}
+              <NavLink
+                to="/dashboard"
+                className={({ isActive }) =>
+                  `w-full text-left px-6 py-3 flex items-center transition-colors ${
+                    isActive
+                      ? "bg-gray-700 border-l-4 border-blue-500"
+                      : "hover:bg-gray-700 border-l-4 border-transparent"
+                  }`
+                }
               >
                 <LayoutDashboard className="w-5 h-5 mr-3" /> Dashboard
-              </button>
+              </NavLink>
             </li>
             <li>
-              <button
-                onClick={() => setActiveTab("chat")}
-                className={`w-full text-left px-6 py-3 flex items-center transition-colors ${activeTab === "chat" ? "bg-gray-700 border-l-4 border-blue-500" : "hover:bg-gray-700 border-l-4 border-transparent"}`}
+              <NavLink
+                to="/chat"
+                className={({ isActive }) =>
+                  `w-full text-left px-6 py-3 flex items-center transition-colors ${
+                    isActive
+                      ? "bg-gray-700 border-l-4 border-blue-500"
+                      : "hover:bg-gray-700 border-l-4 border-transparent"
+                  }`
+                }
               >
                 <MessageSquare className="w-5 h-5 mr-3" /> Chat
-              </button>
+              </NavLink>
             </li>
             <li>
-              <button
-                onClick={() => setActiveTab("settings")}
-                className={`w-full text-left px-6 py-3 flex items-center transition-colors ${activeTab === "settings" ? "bg-gray-700 border-l-4 border-blue-500" : "hover:bg-gray-700 border-l-4 border-transparent"}`}
+              <NavLink
+                to="/settings"
+                className={({ isActive }) =>
+                  `w-full text-left px-6 py-3 flex items-center transition-colors ${
+                    isActive
+                      ? "bg-gray-700 border-l-4 border-blue-500"
+                      : "hover:bg-gray-700 border-l-4 border-transparent"
+                  }`
+                }
               >
                 <Settings className="w-5 h-5 mr-3" /> Settings
-              </button>
+              </NavLink>
             </li>
           </ul>
         </nav>
@@ -553,37 +569,40 @@ export default function App() {
           <Shield className="text-blue-500 w-6 h-6 mr-2" />
           <h1 className="text-lg font-bold">IRon AI</h1>
           <div className="ml-auto flex space-x-4">
-            <button
-              onClick={() => setActiveTab("dashboard")}
-              className={
-                activeTab === "dashboard" ? "text-blue-500" : "text-gray-400"
+            <NavLink
+              to="/dashboard"
+              className={({ isActive }) =>
+                isActive ? "text-blue-500" : "text-gray-400"
               }
             >
               <LayoutDashboard className="w-5 h-5" />
-            </button>
-            <button
-              onClick={() => setActiveTab("chat")}
-              className={
-                activeTab === "chat" ? "text-blue-500" : "text-gray-400"
+            </NavLink>
+            <NavLink
+              to="/chat"
+              className={({ isActive }) =>
+                isActive ? "text-blue-500" : "text-gray-400"
               }
             >
               <MessageSquare className="w-5 h-5" />
-            </button>
-            <button
-              onClick={() => setActiveTab("settings")}
-              className={
-                activeTab === "settings" ? "text-blue-500" : "text-gray-400"
+            </NavLink>
+            <NavLink
+              to="/settings"
+              className={({ isActive }) =>
+                isActive ? "text-blue-500" : "text-gray-400"
               }
             >
               <Settings className="w-5 h-5" />
-            </button>
+            </NavLink>
           </div>
         </header>
 
         {/* Dynamic View */}
-        {activeTab === "dashboard" && renderDashboard()}
-        {activeTab === "chat" && renderChat()}
-        {activeTab === "settings" && renderSettings()}
+        <Routes>
+          <Route path="/" element={<Navigate to="/dashboard" replace />} />
+          <Route path="/dashboard" element={renderDashboard()} />
+          <Route path="/chat" element={renderChat()} />
+          <Route path="/settings" element={renderSettings()} />
+        </Routes>
       </main>
     </div>
   );
