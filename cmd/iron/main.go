@@ -17,6 +17,7 @@ import (
 	_ "iron/internal/communicators/whatsapp"
 	"iron/internal/gateway"
 	"iron/internal/onboarding"
+	"iron/internal/webui"
 
 	"github.com/spf13/cobra"
 )
@@ -51,6 +52,7 @@ Version: ` + version,
 		serveCmd(),
 		versionCmd(),
 		doctorCmd(),
+		webCmd(),
 	)
 
 	if err := rootCmd.Execute(); err != nil {
@@ -194,4 +196,33 @@ func onboardCmd() *cobra.Command {
 			return nil
 		},
 	}
+}
+
+func webCmd() *cobra.Command {
+	var port int
+
+	cmd := &cobra.Command{
+		Use:   "web",
+		Short: "Start the IRon Web UI dashboard",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			gw := gateway.New(cfgFile)
+
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+
+			sigCh := make(chan os.Signal, 1)
+			signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+			go func() {
+				<-sigCh
+				fmt.Println("\nReceived signal, shutting down web server...")
+				cancel()
+			}()
+
+			server := webui.NewServer(gw, port)
+			return server.Start(ctx)
+		},
+	}
+
+	cmd.Flags().IntVarP(&port, "port", "p", 8080, "Port to run the web server on")
+	return cmd
 }

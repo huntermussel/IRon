@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strconv"
 	"sync"
 	"time"
 
@@ -40,6 +41,7 @@ type Adapter struct {
 	gw         *gateway.Gateway
 	sessions   map[int64]*userSession
 	sessionsMu sync.RWMutex
+	logChatID  int64
 }
 
 func (a *Adapter) ID() string {
@@ -68,16 +70,22 @@ func (a *Adapter) Start(ctx context.Context, gw *gateway.Gateway) error {
 	a.gw = gw
 	a.sessions = make(map[int64]*userSession)
 
+	if logChatStr := os.Getenv("TELEGRAM_LOG_CHAT_ID"); logChatStr != "" {
+		if id, err := strconv.ParseInt(logChatStr, 10, 64); err == nil {
+			a.logChatID = id
+		}
+	}
+
 	a.setupHandlers()
 
-	tLog.Printf("[Telegram] 🤖 Starting Bot... (@%s)", a.bot.Me.Username)
+	a.log("[Telegram] 🤖 Starting Bot... (@%s)", a.bot.Me.Username)
 
 	// Clean up old sessions periodically
 	go a.cleanupLoop(ctx)
 
 	go func() {
 		<-ctx.Done()
-		tLog.Println("[Telegram] Shutting down...")
+		a.log("[Telegram] Shutting down...")
 		a.bot.Stop()
 		a.cleanupAllSessions()
 	}()
@@ -115,7 +123,7 @@ func (a *Adapter) handleMessage(c tele.Context) error {
 
 	session, err := a.getSession(context.Background(), chatID)
 	if err != nil {
-		tLog.Printf("[Telegram] Error getting session for %d: %v", chatID, err)
+		a.log("[Telegram] Error getting session for %d: %v", chatID, err)
 		return c.Send("⚠️ Error initializing assistant. Please try again later.")
 	}
 
@@ -127,9 +135,13 @@ func (a *Adapter) handleMessage(c tele.Context) error {
 	turnCtx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 	defer cancel()
 
-	reply, err := session.service.Send(turnCtx, text)
+	mwCtx := map[string]any{
+		"telegram_chat_id": chatID,
+	}
+
+	reply, err := session.service.SendWithContext(turnCtx, text, mwCtx)
 	if err != nil {
-		tLog.Printf("[Telegram] Error processing message for %d: %v", chatID, err)
+		a.log("[Telegram] Error processing message for %d: %v", chatID, err)
 		return c.Send(fmt.Sprintf("⚠️ An error occurred: %v", err))
 	}
 
@@ -158,10 +170,10 @@ func (a *Adapter) getSession(ctx context.Context, chatID int64) (*userSession, e
 		return session, nil
 	}
 
-	tLog.Printf("[Telegram] Initializing new IRon session for chat %d...", chatID)
+	a.log("[Telegram] Initializing new IRon session for chat %d...", chatID)
 
 	statusCb := func(msg string) {
-		_ = sendLongMessage(a.bot, &tele.Chat{ID: chatID}, msg)
+		a.log("%s", msg)
 	}
 	streamCb := func(msg string) {
 		// no-op to prevent stdout spam
@@ -195,7 +207,7 @@ func (a *Adapter) cleanupLoop(ctx context.Context) {
 			for id, session := range a.sessions {
 				// Expire sessions inactive for more than 2 hours
 				if time.Since(session.lastUse) > 2*time.Hour {
-					tLog.Printf("[Telegram] Cleaning up inactive session for chat %d", id)
+					a.log("[Telegram] Cleaning up inactive session for chat %d", id)
 					session.cleanup()
 					delete(a.sessions, id)
 				}
@@ -233,4 +245,12 @@ func sendLongMessage(bot *tele.Bot, to tele.Recipient, text string, opts ...inte
 		}
 	}
 	return nil
+}
+
+func (a *Adapter) log(format string, args ...interface{}) {
+	msg := fmt.Sprintf(format, args...)
+	tLog.Println(msg)
+	if a.logChatID != 0 && a.bot != nil {
+		_ = sendLongMessage(a.bot, &tele.Chat{ID: a.logChatID}, "🪵 "+msg)
+	}
 }

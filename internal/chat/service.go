@@ -95,10 +95,10 @@ func (s *Service) SendWithContext(ctx context.Context, input string, mwCtx map[s
 		s.history = append([]Message{}, s.history[len(s.history)-20:]...)
 	}
 
-	inputWithContext := input
+	var memoryContext string
 	if s.mem != nil {
 		if hits := s.mem.Query("default", input, 2); len(hits) > 0 {
-			inputWithContext = fmt.Sprintf("<context>\n%s\n</context>\n\n%s", strings.Join(hits, "\n"), input)
+			memoryContext = fmt.Sprintf("<context>\n%s\n</context>", strings.Join(hits, "\n"))
 		}
 	}
 
@@ -110,7 +110,7 @@ func (s *Service) SendWithContext(ctx context.Context, input string, mwCtx map[s
 		}
 		e := &middleware.Event{
 			Name:     middleware.EventBeforeLLMRequest,
-			UserText: inputWithContext,
+			UserText: input,
 			Context:  mwCtx,
 			Params:   &middleware.LLMParams{},
 		}
@@ -119,7 +119,7 @@ func (s *Service) SendWithContext(ctx context.Context, input string, mwCtx map[s
 			return "", err
 		}
 
-		updated, canceled := applyTextDecisions(inputWithContext, results)
+		updated, canceled := applyTextDecisions(input, results)
 		if canceled != nil && canceled.Cancel {
 			// Middleware canceled the request (e.g. Greeting, Alarm Deterministic)
 			// Return the replaced text immediately as the answer.
@@ -134,7 +134,7 @@ func (s *Service) SendWithContext(ctx context.Context, input string, mwCtx map[s
 			}
 			return "", errors.New(canceled.Reason)
 		}
-		inputWithContext = updated
+		input = updated
 		llmParams = e.Params
 	}
 
@@ -178,7 +178,7 @@ func (s *Service) SendWithContext(ctx context.Context, input string, mwCtx map[s
 
 	// Use a temporary slice for the current conversation turn
 	currentHistory := append([]Message{}, s.history...)
-	currentHistory = append(currentHistory, Message{Role: RoleUser, Content: inputWithContext})
+	currentHistory = append(currentHistory, Message{Role: RoleUser, Content: input})
 
 	for i := 0; i < maxIterations; i++ {
 		messages := make([]Message, 0, len(currentHistory)+1)
@@ -192,6 +192,10 @@ func (s *Service) SendWithContext(ctx context.Context, input string, mwCtx map[s
 				}
 			}
 			sysPrompt += "\n\nAvailable tools: " + strings.Join(toolNames, ", ") + ". ONLY use these tools."
+		}
+
+		if memoryContext != "" {
+			sysPrompt += "\n\n" + memoryContext
 		}
 
 		messages = append(messages, Message{
@@ -292,7 +296,7 @@ func (s *Service) SendWithContext(ctx context.Context, input string, mwCtx map[s
 
 	// Finalize history with original user input (to keep history compact)
 	s.history = append(s.history, Message{Role: RoleUser, Content: input})
-	// Append only what was added in the loop (skipping UserWithContext)
+	// Append only what was added in the loop (skipping the new User message)
 	if len(currentHistory) > len(s.history) {
 		s.history = append(s.history, currentHistory[len(s.history):]...)
 	}
@@ -301,7 +305,7 @@ func (s *Service) SendWithContext(ctx context.Context, input string, mwCtx map[s
 	if s.mws != nil {
 		e := &middleware.Event{
 			Name:     middleware.EventAfterLLMResponse,
-			UserText: inputWithContext,
+			UserText: input,
 			LLMText:  finalResponse,
 			Context:  mwCtx,
 		}
@@ -323,7 +327,7 @@ func (s *Service) SendWithContext(ctx context.Context, input string, mwCtx map[s
 	}
 
 	if s.mem != nil {
-		s.mem.Index("default", inputWithContext)
+		s.mem.Index("default", input)
 		s.mem.Index("default", finalResponse)
 	}
 
