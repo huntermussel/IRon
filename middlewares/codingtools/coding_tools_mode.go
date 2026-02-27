@@ -3,8 +3,10 @@ package codingtools
 import (
 	"context"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -79,6 +81,36 @@ func baseTools() []llms.Tool {
 				"query": map[string]any{"type": "string", "description": "Text string to search for within files"},
 			},
 			"required": []string{"path", "query"},
+		}),
+		funcTool("cp", "Copy a file or directory", map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"src":  map[string]any{"type": "string"},
+				"dest": map[string]any{"type": "string"},
+			},
+			"required": []string{"src", "dest"},
+		}),
+		funcTool("mv", "Move or rename a file or directory", map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"src":  map[string]any{"type": "string"},
+				"dest": map[string]any{"type": "string"},
+			},
+			"required": []string{"src", "dest"},
+		}),
+		funcTool("rm", "Remove a file or directory", map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"path": map[string]any{"type": "string"},
+			},
+			"required": []string{"path"},
+		}),
+		funcTool("git", "Execute a git command", map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"args": map[string]any{"type": "string", "description": "Git arguments (e.g., 'status', 'commit -m \"msg\"', 'push')"},
+			},
+			"required": []string{"args"},
 		}),
 		funcTool("grep", "Search for patterns in a specific file. Use this when you know which file to search.", map[string]any{
 			"type": "object",
@@ -196,6 +228,14 @@ func runTool(tc mw.ToolCall) (string, bool) {
 		return toolGrep(tc.Args), true
 	case "diff":
 		return toolDiff(tc.Args), true
+	case "cp":
+		return toolCp(tc.Args), true
+	case "mv":
+		return toolMv(tc.Args), true
+	case "rm":
+		return toolRm(tc.Args), true
+	case "git":
+		return toolGit(tc.Args), true
 	default:
 		return "", false
 	}
@@ -381,4 +421,77 @@ func toolDiff(args map[string]any) string {
 		return "diff: files are identical"
 	}
 	return fmt.Sprintf("diff: files differ (%s vs %s)", a, b)
+}
+
+func toolCp(args map[string]any) string {
+	src, err := cleanPath(args["src"])
+	if err != nil {
+		return "cp: " + err.Error()
+	}
+	dest, err := cleanPath(args["dest"])
+	if err != nil {
+		return "cp: " + err.Error()
+	}
+
+	srcFile, err := os.Open(src)
+	if err != nil {
+		return "cp: " + err.Error()
+	}
+	defer srcFile.Close()
+
+	destFile, err := os.Create(dest)
+	if err != nil {
+		return "cp: " + err.Error()
+	}
+	defer destFile.Close()
+
+	if _, err := io.Copy(destFile, srcFile); err != nil {
+		return "cp: " + err.Error()
+	}
+	return fmt.Sprintf("ok: copied %s to %s", src, dest)
+}
+
+func toolMv(args map[string]any) string {
+	src, err := cleanPath(args["src"])
+	if err != nil {
+		return "mv: " + err.Error()
+	}
+	dest, err := cleanPath(args["dest"])
+	if err != nil {
+		return "mv: " + err.Error()
+	}
+
+	if err := os.Rename(src, dest); err != nil {
+		return "mv: " + err.Error()
+	}
+	return fmt.Sprintf("ok: moved %s to %s", src, dest)
+}
+
+func toolRm(args map[string]any) string {
+	path, err := cleanPath(args["path"])
+	if err != nil {
+		return "rm: " + err.Error()
+	}
+
+	if err := os.RemoveAll(path); err != nil {
+		return "rm: " + err.Error()
+	}
+	return fmt.Sprintf("ok: removed %s", path)
+}
+
+func toolGit(args map[string]any) string {
+	gitArgs, ok := args["args"].(string)
+	if !ok || gitArgs == "" {
+		return "git: arguments are required"
+	}
+
+	// Split arguments carefully to avoid quoting issues
+	fields := strings.Fields(gitArgs)
+
+	cmd := exec.Command("git", fields...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Sprintf("git error: %v\nOutput: %s", err, string(out))
+	}
+	return string(out)
 }
