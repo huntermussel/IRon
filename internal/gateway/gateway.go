@@ -23,7 +23,10 @@ import (
 )
 
 type Gateway struct {
-	ConfigPath string
+	ConfigPath        string
+	heartbeatCancel   context.CancelFunc
+	heartbeatInterval int
+	heartbeatEnabled  bool
 }
 
 func New(configPath string) *Gateway {
@@ -59,6 +62,8 @@ func (g *Gateway) LoadConfig() {
 			if len(disabled) > 0 {
 				os.Setenv("IRON_DISABLED_MIDDLEWARES", strings.Join(disabled, ","))
 			}
+			g.heartbeatEnabled = cfg.HeartbeatEnabled
+			g.heartbeatInterval = cfg.HeartbeatInterval
 		}
 	}
 }
@@ -154,6 +159,52 @@ func (g *Gateway) InitService(ctx context.Context, extraOpts ...chat.ServiceOpti
 	return service, model, provider, baseURL, cleanup, nil
 }
 
+func (g *Gateway) StartHeartbeat(ctx context.Context) {
+	if !g.heartbeatEnabled || g.heartbeatInterval <= 0 {
+		return
+	}
+
+	if g.heartbeatCancel != nil {
+		g.heartbeatCancel() // Stop existing heartbeat
+	}
+
+	hbCtx, cancel := context.WithCancel(ctx)
+	g.heartbeatCancel = cancel
+
+	go func() {
+		ticker := time.NewTicker(time.Duration(g.heartbeatInterval) * time.Minute)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-hbCtx.Done():
+				return
+			case <-ticker.C:
+				service, _, _, _, cleanup, err := g.InitService(hbCtx)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "[Heartbeat] init error: %v\n", err)
+					continue
+				}
+
+				// The heartbeat is a "system" request to the LLM to review state and decide if it needs to act.
+				hbPrompt := fmt.Sprintf("SYSTEM HEARTBEAT TICK. Time is %s. Do you have any proactive tasks, cron jobs, or alerts that need your attention right now? If no, output nothing. If yes, take action using your tools.", time.Now().Format(time.RFC3339))
+
+				// Pass a flag so the chat service knows not to add this to the user's visible history
+				mwCtx := map[string]any{"is_heartbeat": true}
+				turnCtx, turnCancel := context.WithTimeout(hbCtx, 5*time.Minute)
+				_, err = service.SendWithContext(turnCtx, hbPrompt, mwCtx)
+				turnCancel()
+
+				cleanup()
+
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "[Heartbeat] error: %v\n", err)
+				}
+			}
+		}
+	}()
+}
+
 func (g *Gateway) Execute(ctx context.Context, input string) error {
 	service, _, _, _, cleanup, err := g.InitService(ctx)
 	if err != nil {
@@ -181,6 +232,8 @@ func (g *Gateway) Run(ctx context.Context) error {
 		return err
 	}
 	defer cleanup()
+
+	g.StartHeartbeat(ctx)
 
 	// 2. Interactive Loop
 	fmt.Println("IRon chat")

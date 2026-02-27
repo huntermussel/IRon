@@ -304,9 +304,11 @@ func (s *Server) handlePlugins(w http.ResponseWriter, r *http.Request) {
 	plugins := make([]map[string]interface{}, 0, len(registered))
 
 	for _, mw := range registered {
+		options := onboarding.GetKnownEnvVars(mw.ID())
 		plugins = append(plugins, map[string]interface{}{
 			"id":       mw.ID(),
 			"priority": mw.Priority(),
+			"options":  options,
 		})
 	}
 

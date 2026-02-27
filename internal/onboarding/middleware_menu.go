@@ -94,7 +94,7 @@ func (m *MiddlewareMenu) configureMiddleware(s *MiddlewareSetting) {
 		fmt.Println("1) Toggle Status")
 
 		// Dynamic options based on Middleware ID
-		options := getKnownEnvVars(s.ID)
+		options := GetKnownEnvVars(s.ID)
 		for i, opt := range options {
 			currentVal := s.EnvVars[opt.Key]
 			if currentVal == "" {
@@ -133,34 +133,34 @@ func (m *MiddlewareMenu) configureMiddleware(s *MiddlewareSetting) {
 	}
 }
 
-type envOption struct {
-	Label string
-	Key   string
+type EnvOption struct {
+	Label string `json:"label"`
+	Key   string `json:"key"`
 }
 
-// getKnownEnvVars returns configuration keys for built-in middlewares
-func getKnownEnvVars(id string) []envOption {
+// GetKnownEnvVars returns configuration keys for built-in middlewares
+func GetKnownEnvVars(id string) []EnvOption {
 	switch id {
 	case "weather":
-		return []envOption{
+		return []EnvOption{
 			{Label: "Weather Provider API Key", Key: "WEATHER_API_KEY"},
 			{Label: "Default Location", Key: "WEATHER_DEFAULT_LOCATION"},
 		}
 	case "pytools_mode", "pytools_exec":
-		return []envOption{
+		return []EnvOption{
 			{Label: "Scripts Directory", Key: "IRON_SCRIPTS_DIR"},
 			{Label: "Python Path", Key: "IRON_PYTHON_PATH"},
 		}
 	case "token_budget":
-		return []envOption{
+		return []EnvOption{
 			{Label: "Max Tokens per Request", Key: "IRON_TOKEN_LIMIT"},
 		}
 	case "coding_tools_mode":
-		return []envOption{
+		return []EnvOption{
 			{Label: "Restricted Root Path", Key: "IRON_CODING_ROOT"},
 		}
 	case "slack":
-		return []envOption{
+		return []EnvOption{
 			{Label: "Slack Bot Token", Key: "SLACK_BOT_TOKEN"},
 			{Label: "Slack App Token", Key: "SLACK_APP_TOKEN"},
 		}

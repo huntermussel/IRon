@@ -14,12 +14,32 @@ import { marked } from "marked";
 import { Routes, Route, NavLink, Navigate } from "react-router-dom";
 
 // --- Types ---
+interface MiddlewareSetting {
+  id: string;
+  enabled: boolean;
+  env_vars?: Record<string, string>;
+}
+
 interface Config {
   provider: string;
   model: string;
   base_url?: string;
   api_key?: string;
   scripts_dir?: string;
+  middlewares?: MiddlewareSetting[];
+  heartbeat_enabled?: boolean;
+  heartbeat_interval?: number;
+}
+
+interface PluginOption {
+  label: string;
+  key: string;
+}
+
+interface PluginMeta {
+  id: string;
+  priority: number;
+  options: PluginOption[] | null;
 }
 
 interface Message {
@@ -41,7 +61,12 @@ export default function App() {
     base_url: "",
     api_key: "",
     scripts_dir: "scripts",
+    middlewares: [],
+    heartbeat_enabled: false,
+    heartbeat_interval: 5,
   });
+
+  const [plugins, setPlugins] = useState<PluginMeta[]>([]);
 
   // Chat State
   const [messages, setMessages] = useState<Message[]>([
@@ -68,6 +93,7 @@ export default function App() {
   useEffect(() => {
     fetchStatus();
     loadSettings();
+    loadPlugins();
     const interval = setInterval(fetchStatus, 30000);
     return () => clearInterval(interval);
   }, []);
@@ -99,6 +125,18 @@ export default function App() {
   }, [config]);
 
   // --- API Calls ---
+  const loadPlugins = async () => {
+    try {
+      const res = await fetch("/api/plugins");
+      if (res.ok) {
+        const data = await res.json();
+        setPlugins(data.plugins || []);
+      }
+    } catch (e) {
+      console.error("Failed to load plugins", e);
+    }
+  };
+
   const fetchStatus = async () => {
     try {
       const res = await fetch("/api/status");
@@ -127,6 +165,9 @@ export default function App() {
           base_url: data.base_url || "",
           api_key: data.api_key || "",
           scripts_dir: data.scripts_dir || "scripts",
+          middlewares: data.middlewares || [],
+          heartbeat_enabled: data.heartbeat_enabled || false,
+          heartbeat_interval: data.heartbeat_interval || 5,
         });
       }
     } catch (e) {
@@ -473,6 +514,174 @@ export default function App() {
             />
           </div>
         </div>
+
+        <div className="mt-8">
+          <h3 className="text-xl font-bold mb-4 border-b border-gray-700 pb-2">
+            Proactive Agent (Heartbeat)
+          </h3>
+          <div className="space-y-4">
+            <div className="flex items-center justify-between bg-gray-900 p-4 rounded-lg border border-gray-700">
+              <div>
+                <h4 className="font-semibold text-lg">Enable Heartbeat</h4>
+                <p className="text-sm text-gray-400">
+                  Allows the agent to proactively execute cron jobs and
+                  background tasks.
+                </p>
+              </div>
+              <label className="flex items-center cursor-pointer">
+                <div className="relative">
+                  <input
+                    type="checkbox"
+                    className="sr-only"
+                    checked={localConfig.heartbeat_enabled || false}
+                    onChange={(e) =>
+                      setLocalConfig({
+                        ...localConfig,
+                        heartbeat_enabled: e.target.checked,
+                      })
+                    }
+                  />
+                  <div
+                    className={`block w-10 h-6 rounded-full transition-colors ${localConfig.heartbeat_enabled ? "bg-blue-600" : "bg-gray-600"}`}
+                  ></div>
+                  <div
+                    className={`absolute left-1 top-1 bg-white w-4 h-4 rounded-full transition-transform ${localConfig.heartbeat_enabled ? "translate-x-4" : ""}`}
+                  ></div>
+                </div>
+              </label>
+            </div>
+
+            {localConfig.heartbeat_enabled && (
+              <div>
+                <label className="block text-sm font-medium text-gray-400 mb-1">
+                  Heartbeat Interval (Minutes)
+                </label>
+                <input
+                  type="number"
+                  min="1"
+                  value={localConfig.heartbeat_interval || 5}
+                  onChange={(e) =>
+                    setLocalConfig({
+                      ...localConfig,
+                      heartbeat_interval: parseInt(e.target.value, 10),
+                    })
+                  }
+                  className="w-full bg-gray-900 border border-gray-600 rounded p-2 focus:outline-none focus:border-blue-500"
+                />
+              </div>
+            )}
+          </div>
+        </div>
+
+        {plugins.length > 0 && (
+          <div className="mt-8">
+            <h3 className="text-xl font-bold mb-4 border-b border-gray-700 pb-2">
+              Plugins & Middlewares
+            </h3>
+            <div className="space-y-4">
+              {plugins.map((plugin) => {
+                const mwConfig = localConfig.middlewares?.find(
+                  (m) => m.id === plugin.id,
+                ) || { id: plugin.id, enabled: true, env_vars: {} };
+                return (
+                  <div
+                    key={plugin.id}
+                    className="bg-gray-900 p-4 rounded-lg border border-gray-700"
+                  >
+                    <div className="flex items-center justify-between">
+                      <h4 className="font-semibold text-lg">{plugin.id}</h4>
+                      <label className="flex items-center cursor-pointer">
+                        <div className="relative">
+                          <input
+                            type="checkbox"
+                            className="sr-only"
+                            checked={mwConfig.enabled}
+                            onChange={(e) => {
+                              const newMws = [
+                                ...(localConfig.middlewares || []),
+                              ];
+                              const idx = newMws.findIndex(
+                                (m) => m.id === plugin.id,
+                              );
+                              if (idx >= 0) {
+                                newMws[idx] = {
+                                  ...newMws[idx],
+                                  enabled: e.target.checked,
+                                };
+                              } else {
+                                newMws.push({
+                                  id: plugin.id,
+                                  enabled: e.target.checked,
+                                  env_vars: {},
+                                });
+                              }
+                              setLocalConfig({
+                                ...localConfig,
+                                middlewares: newMws,
+                              });
+                            }}
+                          />
+                          <div
+                            className={`block w-10 h-6 rounded-full transition-colors ${mwConfig.enabled ? "bg-blue-600" : "bg-gray-600"}`}
+                          ></div>
+                          <div
+                            className={`absolute left-1 top-1 bg-white w-4 h-4 rounded-full transition-transform ${mwConfig.enabled ? "translate-x-4" : ""}`}
+                          ></div>
+                        </div>
+                      </label>
+                    </div>
+
+                    {plugin.options && plugin.options.length > 0 && (
+                      <div className="space-y-3 mt-4 pt-4 border-t border-gray-700">
+                        {plugin.options.map((opt) => (
+                          <div key={opt.key}>
+                            <label className="block text-sm font-medium text-gray-400 mb-1">
+                              {opt.label}
+                            </label>
+                            <input
+                              type="text"
+                              value={mwConfig.env_vars?.[opt.key] || ""}
+                              onChange={(e) => {
+                                const newMws = [
+                                  ...(localConfig.middlewares || []),
+                                ];
+                                const idx = newMws.findIndex(
+                                  (m) => m.id === plugin.id,
+                                );
+                                const newEnv = {
+                                  ...(mwConfig.env_vars || {}),
+                                  [opt.key]: e.target.value,
+                                };
+                                if (idx >= 0) {
+                                  newMws[idx] = {
+                                    ...newMws[idx],
+                                    env_vars: newEnv,
+                                  };
+                                } else {
+                                  newMws.push({
+                                    id: plugin.id,
+                                    enabled: mwConfig.enabled,
+                                    env_vars: newEnv,
+                                  });
+                                }
+                                setLocalConfig({
+                                  ...localConfig,
+                                  middlewares: newMws,
+                                });
+                              }}
+                              className="w-full bg-gray-800 border border-gray-600 rounded p-2 focus:outline-none focus:border-blue-500"
+                              placeholder={`Enter ${opt.label}`}
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         <div className="mt-8 flex items-center justify-end space-x-4">
           {showSaveSuccess && (

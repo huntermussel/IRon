@@ -11,12 +11,14 @@ import (
 
 // Config represents the core settings gathered during onboarding
 type Config struct {
-	Model       string              `json:"model"`
-	Provider    string              `json:"provider"`
-	BaseURL     string              `json:"base_url,omitempty"`
-	APIKey      string              `json:"api_key,omitempty"`
-	ScriptsDir  string              `json:"scripts_dir"`
-	Middlewares []MiddlewareSetting `json:"middlewares"`
+	Model             string              `json:"model"`
+	Provider          string              `json:"provider"`
+	BaseURL           string              `json:"base_url,omitempty"`
+	APIKey            string              `json:"api_key,omitempty"`
+	ScriptsDir        string              `json:"scripts_dir"`
+	Middlewares       []MiddlewareSetting `json:"middlewares"`
+	HeartbeatEnabled  bool                `json:"heartbeat_enabled,omitempty"`
+	HeartbeatInterval int                 `json:"heartbeat_interval,omitempty"`
 }
 
 // Wizard guide the user through the initial configuration of IRon

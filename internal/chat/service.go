@@ -23,6 +23,7 @@ type Service struct {
 	skillMgr *skills.Manager
 	statusCb func(string)
 	streamCb func(string)
+	mu       sync.Mutex
 }
 
 type ServiceOption func(*Service)
@@ -77,6 +78,8 @@ func NewService(adapter Adapter, opts ...ServiceOption) *Service {
 }
 
 func (s *Service) Clear() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.history = s.history[:0]
 }
 
@@ -85,9 +88,19 @@ func (s *Service) Send(ctx context.Context, input string) (string, error) {
 }
 
 func (s *Service) SendWithContext(ctx context.Context, input string, mwCtx map[string]any) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	input = strings.TrimSpace(input)
 	if input == "" {
 		return "", errors.New("empty input")
+	}
+
+	isHeartbeat := false
+	if mwCtx != nil {
+		if val, ok := mwCtx["is_heartbeat"].(bool); ok {
+			isHeartbeat = val
+		}
 	}
 
 	// 1. Prepare history and context
@@ -124,9 +137,11 @@ func (s *Service) SendWithContext(ctx context.Context, input string, mwCtx map[s
 			// Middleware canceled the request (e.g. Greeting, Alarm Deterministic)
 			// Return the replaced text immediately as the answer.
 			if strings.TrimSpace(updated) != "" {
-				s.history = append(s.history, Message{Role: RoleUser, Content: input})
-				s.history = append(s.history, Message{Role: RoleAssistant, Content: updated})
-				s.streamCb(updated + "\n") // Print to user since loop won't run
+				if !isHeartbeat {
+					s.history = append(s.history, Message{Role: RoleUser, Content: input})
+					s.history = append(s.history, Message{Role: RoleAssistant, Content: updated})
+					s.streamCb(updated + "\n") // Print to user since loop won't run
+				}
 				return updated, nil
 			}
 			if strings.TrimSpace(canceled.Reason) == "" {
@@ -207,11 +222,13 @@ func (s *Service) SendWithContext(ctx context.Context, input string, mwCtx map[s
 		var currentTextBuilder strings.Builder
 		streamCallback := func(chunk string) {
 			currentTextBuilder.WriteString(chunk)
-			s.streamCb(chunk)
+			if !isHeartbeat {
+				s.streamCb(chunk)
+			}
 		}
 
 		assistantText, toolCalls, err := s.adapter.ReplyStream(ctx, messages, llmParams, streamCallback)
-		if i == 0 {
+		if i == 0 && !isHeartbeat {
 			s.streamCb("\n")
 		}
 
@@ -241,7 +258,9 @@ func (s *Service) SendWithContext(ctx context.Context, input string, mwCtx map[s
 			go func(i int, t ToolCall) {
 				defer wg.Done()
 
-				s.statusCb(fmt.Sprintf("🔧 Tool Call: %s(%s)", t.Name, t.Arguments))
+				if !isHeartbeat {
+					s.statusCb(fmt.Sprintf("🔧 Tool Call: %s(%s)", t.Name, t.Arguments))
+				}
 				var result string
 
 				// Try built-in skills first
@@ -275,7 +294,9 @@ func (s *Service) SendWithContext(ctx context.Context, input string, mwCtx map[s
 				if len(displayResult) > 200 {
 					displayResult = displayResult[:200] + "..."
 				}
-				s.statusCb(fmt.Sprintf("   Result: %s", displayResult))
+				if !isHeartbeat {
+					s.statusCb(fmt.Sprintf("   Result: %s", displayResult))
+				}
 
 				// Store the result safely at its original index
 				results[i] = Message{
@@ -295,10 +316,12 @@ func (s *Service) SendWithContext(ctx context.Context, input string, mwCtx map[s
 	}
 
 	// Finalize history with original user input (to keep history compact)
-	s.history = append(s.history, Message{Role: RoleUser, Content: input})
-	// Append only what was added in the loop (skipping the new User message)
-	if len(currentHistory) > len(s.history) {
-		s.history = append(s.history, currentHistory[len(s.history):]...)
+	if !isHeartbeat {
+		s.history = append(s.history, Message{Role: RoleUser, Content: input})
+		// Append only what was added in the loop (skipping the new User message)
+		if len(currentHistory) > len(s.history) {
+			s.history = append(s.history, currentHistory[len(s.history):]...)
+		}
 	}
 
 	// 6. Middleware (Post-LLM) - for the final response
@@ -326,7 +349,7 @@ func (s *Service) SendWithContext(ctx context.Context, input string, mwCtx map[s
 		}
 	}
 
-	if s.mem != nil {
+	if s.mem != nil && !isHeartbeat {
 		s.mem.Index("default", input)
 		s.mem.Index("default", finalResponse)
 	}
