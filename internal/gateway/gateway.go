@@ -31,8 +31,13 @@ func New(configPath string) *Gateway {
 }
 
 func (g *Gateway) InitService(ctx context.Context) (*chat.Service, string, llm.Provider, string, func(), error) {
-	// Load environment variables from .env if present
+	// Load environment variables from local .env if present
 	_ = godotenv.Load()
+
+	// Load global .env from ~/.iron/.env as fallback
+	if home, err := os.UserHomeDir(); err == nil {
+		_ = godotenv.Load(filepath.Join(home, ".iron", ".env"))
+	}
 
 	// Default values
 	model := "llama3.2"

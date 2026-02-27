@@ -58,6 +58,7 @@ const (
 	stateAPIKey
 	stateTelegram
 	stateMiddlewares
+	stateExportShell
 	stateDone
 )
 
@@ -85,8 +86,9 @@ type TUIModel struct {
 	width    int
 	height   int
 
-	cursor   int // for middleware list
-	tabIndex int
+	cursor    int // for middleware list
+	tabIndex  int
+	exportEnv bool // export to shell profile?
 }
 
 // --- Ollama Discovery ---
@@ -253,6 +255,19 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case " ":
 				m.middlewares[m.cursor].Enabled = !m.middlewares[m.cursor].Enabled
 			case "enter":
+				m.state = stateExportShell
+			}
+		}
+
+	case stateExportShell:
+		if keyMsg, ok := msg.(tea.KeyMsg); ok {
+			switch keyMsg.String() {
+			case "y", "Y":
+				m.exportEnv = true
+				m.state = stateDone
+				return m, m.saveConfig()
+			case "n", "N", "enter":
+				m.exportEnv = false
 				m.state = stateDone
 				return m, m.saveConfig()
 			}
@@ -276,7 +291,7 @@ func (m TUIModel) View() string {
 	s.WriteString("\n\n")
 
 	// Tabs logic (Visual progress)
-	tabs := []string{"Provider", "Model", "Telegram", "Middlewares", "Finish"}
+	tabs := []string{"Provider", "Model", "Telegram", "Middlewares", "Export", "Finish"}
 	var renderedTabs []string
 	currentTab := int(m.state)
 	if m.state == stateAPIKey {
@@ -322,8 +337,14 @@ func (m TUIModel) View() string {
 			}
 		}
 		content = mwView.String()
+	case stateExportShell:
+		content = "\nDo you want to export your API keys to your system shell profile (~/.bashrc or ~/.zshrc)?\n\n" +
+			focusedStyle.Render("[Y] Yes    [N] No (Internal Config Only)")
 	case stateDone:
-		content = "\nSaving configuration to ~/.iron/config.json...\nDone! Press any key to exit."
+		content = "\nSaving configuration...\nDone! Press any key to exit."
+		if m.exportEnv {
+			content += "\n\n" + focusedStyle.Render("Environment variables appended to your shell profile. Please restart your terminal or run 'source ~/.bashrc' (or ~/.zshrc) to apply them globally.")
+		}
 	}
 
 	s.WriteString(windowStyle.Width(m.width - 10).Height(m.height - 15).Render(content))
@@ -344,6 +365,10 @@ func (m TUIModel) saveConfig() tea.Cmd {
 			BaseURL:     m.baseURL,
 			ScriptsDir:  "scripts",
 			Middlewares: m.middlewares,
+		}
+
+		if m.exportEnv {
+			exportToShellProfile(cfg, m.telegramToken)
 		}
 
 		if m.telegramToken != "" {
@@ -408,4 +433,41 @@ func (cfg *Config) SaveToFile(path string) error {
 	}
 
 	return os.WriteFile(path, data, 0644)
+}
+
+func exportToShellProfile(cfg Config, telegramToken string) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return
+	}
+
+	// Determine shell profile
+	shell := os.Getenv("SHELL")
+	profile := filepath.Join(home, ".bashrc")
+	if strings.Contains(shell, "zsh") {
+		profile = filepath.Join(home, ".zshrc")
+	}
+
+	file, err := os.OpenFile(profile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return
+	}
+	defer file.Close()
+
+	file.WriteString("\n# IRon AI Assistant Configuration\n")
+	file.WriteString(fmt.Sprintf("export IRON_PROVIDER=\"%s\"\n", cfg.Provider))
+	file.WriteString(fmt.Sprintf("export IRON_MODEL=\"%s\"\n", cfg.Model))
+
+	if cfg.BaseURL != "" {
+		file.WriteString(fmt.Sprintf("export IRON_OLLAMA_URL=\"%s\"\n", cfg.BaseURL))
+	}
+
+	if cfg.APIKey != "" {
+		envVar := "IRON_" + strings.ToUpper(cfg.Provider) + "_API_KEY"
+		file.WriteString(fmt.Sprintf("export %s=\"%s\"\n", envVar, cfg.APIKey))
+	}
+
+	if telegramToken != "" {
+		file.WriteString(fmt.Sprintf("export TELEGRAM_BOT_TOKEN=\"%s\"\n", telegramToken))
+	}
 }
