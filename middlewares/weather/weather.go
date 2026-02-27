@@ -126,7 +126,10 @@ func (m *WeatherMiddleware) handleWeather(ctx context.Context, loc string) (midd
 	}
 
 	// 1. Geocoding to get Lat/Lon
-	geoURL := fmt.Sprintf("https://geocoding-api.open-meteo.com/v1/search?name=%s&count=1&language=en&format=json", url.QueryEscape(loc))
+	// Using count=5 to try and find a better match, but we will just take the first one returned for simplicity.
+	// Open-Meteo geocoding can be finicky with commas/state names, so we try the raw string first.
+	queryLoc := url.QueryEscape(loc)
+	geoURL := fmt.Sprintf("https://geocoding-api.open-meteo.com/v1/search?name=%s&count=5&language=en&format=json", queryLoc)
 	resp, err := http.Get(geoURL)
 	if err != nil {
 		return middleware.Decision{}, fmt.Errorf("geocoding error: %w", err)
@@ -145,8 +148,29 @@ func (m *WeatherMiddleware) handleWeather(ctx context.Context, loc string) (midd
 	}
 
 	if len(geoResult.Results) == 0 {
-		msg := fmt.Sprintf("Could not find location: %s", loc)
-		return middleware.Decision{Cancel: true, ReplaceText: &msg, Reason: "weather: location not found"}, nil
+		// Fallback: If "City, State" fails, try just "City"
+		fallbackLoc := loc
+		for i := 0; i < len(loc); i++ {
+			if loc[i] == ',' {
+				fallbackLoc = loc[:i]
+				break
+			}
+		}
+
+		if fallbackLoc != loc {
+			queryLoc = url.QueryEscape(fallbackLoc)
+			geoURL = fmt.Sprintf("https://geocoding-api.open-meteo.com/v1/search?name=%s&count=5&language=en&format=json", queryLoc)
+			resp, err = http.Get(geoURL)
+			if err == nil {
+				defer resp.Body.Close()
+				_ = json.NewDecoder(resp.Body).Decode(&geoResult)
+			}
+		}
+
+		if len(geoResult.Results) == 0 {
+			msg := fmt.Sprintf("Could not find location: %s", loc)
+			return middleware.Decision{Cancel: true, ReplaceText: &msg, Reason: "weather: location not found"}, nil
+		}
 	}
 
 	lat := geoResult.Results[0].Lat
