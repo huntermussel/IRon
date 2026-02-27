@@ -94,21 +94,28 @@ func (EmailExec) OnEvent(_ context.Context, e *mw.Event) (mw.Decision, error) {
 	}
 
 	outputs := make([]string, 0, len(raw))
+	handled := false
 	for _, tc := range raw {
 		switch tc.Tool {
 		case "search_emails":
+			handled = true
 			query, _ := tc.Args["query"].(string)
 			out := searchEmails(query)
-			outputs = append(outputs, out)
+			if strings.TrimSpace(out) != "" {
+				outputs = append(outputs, out)
+			}
 		case "send_email":
+			handled = true
 			to, _ := tc.Args["to"].(string)
 			subj, _ := tc.Args["subject"].(string)
 			body, _ := tc.Args["body"].(string)
 			out := sendEmail(to, subj, body)
-			outputs = append(outputs, out)
+			if strings.TrimSpace(out) != "" {
+				outputs = append(outputs, out)
+			}
 		}
 	}
-	if len(outputs) == 0 {
+	if !handled {
 		return mw.Decision{}, nil
 	}
 	text := strings.Join(outputs, "\n\n")

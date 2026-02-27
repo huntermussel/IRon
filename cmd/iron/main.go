@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"iron/internal/gateway"
 	"iron/internal/onboarding"
@@ -77,13 +78,22 @@ func chatCmd() *cobra.Command {
 }
 
 func execCmd() *cobra.Command {
-	return &cobra.Command{
+	var timeout int
+
+	cmd := &cobra.Command{
 		Use:   "exec [prompt]",
 		Short: "Execute a single prompt and exit",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			gw := gateway.New(cfgFile)
-			ctx, cancel := context.WithCancel(context.Background())
+
+			ctx := context.Background()
+			var cancel context.CancelFunc
+			if timeout > 0 {
+				ctx, cancel = context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
+			} else {
+				ctx, cancel = context.WithCancel(ctx)
+			}
 			defer cancel()
 
 			sigCh := make(chan os.Signal, 1)
@@ -96,6 +106,9 @@ func execCmd() *cobra.Command {
 			return gw.Execute(ctx, args[0])
 		},
 	}
+
+	cmd.Flags().IntVarP(&timeout, "timeout", "t", 300, "Execution timeout in seconds")
+	return cmd
 }
 
 func versionCmd() *cobra.Command {

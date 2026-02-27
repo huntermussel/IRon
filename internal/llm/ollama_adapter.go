@@ -2,10 +2,12 @@ package llm
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"iron/internal/chat"
 	"iron/internal/middleware"
 	"strings"
+	"time"
 
 	"github.com/tmc/langchaingo/llms"
 	"github.com/tmc/langchaingo/llms/openai"
@@ -85,7 +87,7 @@ func (a *OllamaAdapter) ReplyStream(ctx context.Context, history []chat.Message,
 				Parts: []llms.ContentPart{
 					llms.ToolCallResponse{
 						ToolCallID: m.ToolCallID,
-						Name:       "", // Optional?
+						Name:       m.ToolName,
 						Content:    m.Content,
 					},
 				},
@@ -141,6 +143,43 @@ func (a *OllamaAdapter) ReplyStream(ctx context.Context, history []chat.Message,
 			Name:      tc.FunctionCall.Name,
 			Arguments: tc.FunctionCall.Arguments,
 		})
+	}
+
+	// Heuristic fallback for models that output JSON in text instead of ToolCalls field
+	if len(toolCalls) == 0 && resp.Choices[0].Content != "" {
+		content := strings.TrimSpace(resp.Choices[0].Content)
+		// Remove markdown code blocks if present
+		if strings.HasPrefix(content, "```") {
+			content = strings.TrimPrefix(content, "```json")
+			content = strings.TrimPrefix(content, "```")
+			content = strings.TrimSuffix(content, "```")
+			content = strings.TrimSpace(content)
+		}
+
+		if strings.HasPrefix(content, "{") && strings.HasSuffix(content, "}") {
+			var h struct {
+				Name      string         `json:"name"`
+				Arguments map[string]any `json:"arguments"`
+				Params    map[string]any `json:"parameters"`
+			}
+			if err := json.Unmarshal([]byte(content), &h); err == nil && h.Name != "" {
+				args := h.Arguments
+				if args == nil {
+					args = h.Params
+				}
+				if args == nil {
+					args = make(map[string]any)
+				}
+				argsBytes, _ := json.Marshal(args)
+				toolCalls = append(toolCalls, chat.ToolCall{
+					ID:        fmt.Sprintf("h_%d", time.Now().UnixNano()),
+					Name:      h.Name,
+					Arguments: string(argsBytes),
+				})
+				// If we found a tool call, we assume the content was just the tool call
+				return "", toolCalls, nil
+			}
+		}
 	}
 
 	return resp.Choices[0].Content, toolCalls, nil

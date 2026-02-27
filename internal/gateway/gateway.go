@@ -114,7 +114,7 @@ func (g *Gateway) initService(ctx context.Context) (*chat.Service, string, llm.P
 	// Skills
 	skillMgr := skills.NewManager()
 	skillMgr.Register(&skills.ShellSkill{})
-	skillMgr.Register(&skills.FileSkill{})
+	// skillMgr.Register(&skills.FileSkill{}) // Redundant with codingtools middleware
 	skillMgr.Register(&skills.FetchSkill{})
 	skillMgr.Register(&skills.MemorySkill{Store: memStore})
 	skillMgr.Register(&skills.BrowserSkill{Controller: browserCtrl})
@@ -141,7 +141,10 @@ func (g *Gateway) Execute(ctx context.Context, input string) error {
 	}
 	defer cleanup()
 
-	turnCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	// For single-shot execution, we allow a much longer turn timeout
+	// to enable deep reasoning and multiple tool calls (e.g. codebase summarization).
+	// The overall process is still governed by the parent context deadline (CLI --timeout).
+	turnCtx, cancel := context.WithTimeout(ctx, 60*time.Minute)
 	defer cancel()
 
 	resp, err := service.Send(turnCtx, input)
@@ -192,7 +195,8 @@ func (g *Gateway) Run(ctx context.Context) error {
 			continue
 		}
 
-		turnCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+		// Allow up to 15 minutes per turn in interactive mode for complex tool sequences.
+		turnCtx, cancel := context.WithTimeout(ctx, 15*time.Minute)
 		assistant, err := service.Send(turnCtx, input)
 		cancel()
 		if err != nil {

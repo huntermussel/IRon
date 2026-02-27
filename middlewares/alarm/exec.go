@@ -38,16 +38,18 @@ func (AlarmExec) OnEvent(_ context.Context, e *mw.Event) (mw.Decision, error) {
 	}
 
 	outputs := make([]string, 0, len(raw))
+	handled := false
 	for _, tc := range raw {
 		if tc.Tool != "alarm.set" {
 			continue
 		}
+		handled = true
 		out := runAlarmTool(tc)
 		if strings.TrimSpace(out) != "" {
 			outputs = append(outputs, out)
 		}
 	}
-	if len(outputs) == 0 {
+	if !handled {
 		return mw.Decision{}, nil
 	}
 

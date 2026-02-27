@@ -18,4 +18,5 @@ type Message struct {
 
 	// For Tool messages: the ID of the call being answered
 	ToolCallID string
+	ToolName   string
 }

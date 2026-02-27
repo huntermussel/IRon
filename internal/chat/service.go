@@ -77,7 +77,7 @@ func (s *Service) SendWithContext(ctx context.Context, input string, mwCtx map[s
 	inputWithContext := input
 	if s.mem != nil {
 		if hits := s.mem.Query("default", input, 2); len(hits) > 0 {
-			inputWithContext = "Context from memory:\n- " + strings.Join(hits, "\n- ") + "\n\n" + input
+			inputWithContext = fmt.Sprintf("Context:\n%s\n\nUser: %s", strings.Join(hits, "\n"), input)
 		}
 	}
 
@@ -103,7 +103,7 @@ func (s *Service) SendWithContext(ctx context.Context, input string, mwCtx map[s
 			// Middleware canceled the request (e.g. Greeting, Alarm Deterministic)
 			// Return the replaced text immediately as the answer.
 			if strings.TrimSpace(updated) != "" {
-				s.history = append(s.history, Message{Role: RoleUser, Content: inputWithContext})
+				s.history = append(s.history, Message{Role: RoleUser, Content: input})
 				s.history = append(s.history, Message{Role: RoleAssistant, Content: updated})
 				fmt.Println(updated) // Print to user since loop won't run
 				return updated, nil
@@ -151,27 +151,22 @@ func (s *Service) SendWithContext(ctx context.Context, input string, mwCtx map[s
 		llmParams.Tools = unique
 	}
 
-	// 4. Construct messages for this turn
-	messages := make([]Message, 0, len(s.history)+2)
-
-	// System Prompt
-	systemPrompt := fmt.Sprintf("You are IRon, a highly capable AI assistant running in a terminal. Current time: %s. ", time.Now().Format(time.RFC1123))
-	if len(llmParams.Tools) > 0 {
-		systemPrompt += "CRITICAL: You MUST use the provided tools to fetch real-world data or perform actions. " +
-			"DO NOT apologize, DO NOT give AI disclaimers (e.g., 'I am an AI', 'I don't have access'), and DO NOT imagine data. " +
-			"If a tool exists for a request (like 'shell' for 'pwd' or 'ls'), you ARE REQUIRED to call it. " +
-			"Your responses must be direct and based ONLY on the tool results when tools are available."
-	}
-	messages = append(messages, Message{Role: RoleSystem, Content: systemPrompt})
-
-	messages = append(messages, s.history...)
-	messages = append(messages, Message{Role: RoleUser, Content: inputWithContext})
-
-	// 5. Agent Loop (max 5 iterations)
+	// 5. Agent Loop (max 10 iterations)
 	var finalResponse string
-	const maxIterations = 5
+	const maxIterations = 10
+
+	// Use a temporary slice for the current conversation turn
+	currentHistory := append([]Message{}, s.history...)
+	currentHistory = append(currentHistory, Message{Role: RoleUser, Content: inputWithContext})
 
 	for i := 0; i < maxIterations; i++ {
+		messages := make([]Message, 0, len(currentHistory)+1)
+		messages = append(messages, Message{
+			Role:    RoleSystem,
+			Content: fmt.Sprintf("You are IRon, a terminal AI. Use tools. No disclaimers. Use relative paths. NEVER guess file locations; explore first with 'ls' or 'pwd'. Time: %s", time.Now().Format(time.RFC1123)),
+		})
+		messages = append(messages, currentHistory...)
+
 		var currentTextBuilder strings.Builder
 		streamCallback := func(chunk string) {
 			currentTextBuilder.WriteString(chunk)
@@ -187,21 +182,18 @@ func (s *Service) SendWithContext(ctx context.Context, input string, mwCtx map[s
 			return "", err
 		}
 
-		// If no tool calls, we are done.
-		if len(toolCalls) == 0 {
-			finalResponse = assistantText
-			s.history = append(s.history, Message{Role: RoleUser, Content: inputWithContext})
-			s.history = append(s.history, Message{Role: RoleAssistant, Content: finalResponse})
-			break
-		}
-
-		// If tools were called:
+		// Record Assistant message in current history
 		assistantMsg := Message{
 			Role:      RoleAssistant,
 			Content:   assistantText,
 			ToolCalls: toolCalls,
 		}
-		messages = append(messages, assistantMsg)
+		currentHistory = append(currentHistory, assistantMsg)
+
+		if len(toolCalls) == 0 {
+			finalResponse = assistantText
+			break
+		}
 
 		// 2. Execute tools
 		for _, tc := range toolCalls {
@@ -223,8 +215,6 @@ func (s *Service) SendWithContext(ctx context.Context, input string, mwCtx map[s
 				}
 			} else {
 				// Not in built-in skills? Try Middleware execution!
-				// We simulate an AfterLLMResponse event containing JUST this tool call
-				// to see if any middleware picks it up.
 				mwResult, mwErr := s.executeMiddlewareTool(ctx, mwCtx, tc)
 				if mwErr == nil && mwResult != "" {
 					result = mwResult
@@ -240,12 +230,21 @@ func (s *Service) SendWithContext(ctx context.Context, input string, mwCtx map[s
 			}
 			fmt.Printf("   Result: %s\n", displayResult)
 
-			messages = append(messages, Message{
+			// Add tool response to current history
+			currentHistory = append(currentHistory, Message{
 				Role:       RoleTool,
 				Content:    result,
 				ToolCallID: tc.ID,
+				ToolName:   tc.Name,
 			})
 		}
+	}
+
+	// Finalize history with original user input (to keep history compact)
+	s.history = append(s.history, Message{Role: RoleUser, Content: input})
+	// Append only what was added in the loop (skipping UserWithContext)
+	if len(currentHistory) > len(s.history) {
+		s.history = append(s.history, currentHistory[len(s.history):]...)
 	}
 
 	// 6. Middleware (Post-LLM) - for the final response

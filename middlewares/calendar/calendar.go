@@ -96,21 +96,28 @@ func (CalendarExec) OnEvent(_ context.Context, e *mw.Event) (mw.Decision, error)
 	}
 
 	outputs := make([]string, 0, len(raw))
+	handled := false
 	for _, tc := range raw {
 		switch tc.Tool {
 		case "list_calendar_events":
+			handled = true
 			start, _ := tc.Args["start_date"].(string)
 			out := listCalendarEvents(start)
-			outputs = append(outputs, out)
+			if strings.TrimSpace(out) != "" {
+				outputs = append(outputs, out)
+			}
 		case "create_calendar_event":
+			handled = true
 			title, _ := tc.Args["title"].(string)
 			start, _ := tc.Args["start_time"].(string)
 			end, _ := tc.Args["end_time"].(string)
 			out := createCalendarEvent(title, start, end)
-			outputs = append(outputs, out)
+			if strings.TrimSpace(out) != "" {
+				outputs = append(outputs, out)
+			}
 		}
 	}
-	if len(outputs) == 0 {
+	if !handled {
 		return mw.Decision{}, nil
 	}
 	text := strings.Join(outputs, "\n\n")

@@ -165,15 +165,19 @@ func (PyToolsExec) OnEvent(_ context.Context, e *mw.Event) (mw.Decision, error) 
 	}
 
 	var outputs []string
+	handled := false
 	for _, tc := range raw {
 		if strings.HasPrefix(tc.Tool, "py_") {
+			handled = true
 			scriptName := strings.TrimPrefix(tc.Tool, "py_")
 			out := runPyScript(scriptName, tc.Args)
-			outputs = append(outputs, fmt.Sprintf("### Python Tool: %s\n%s", scriptName, out))
+			if strings.TrimSpace(out) != "" {
+				outputs = append(outputs, fmt.Sprintf("### Python Tool: %s\n%s", scriptName, out))
+			}
 		}
 	}
 
-	if len(outputs) == 0 {
+	if !handled {
 		return mw.Decision{}, nil
 	}
 

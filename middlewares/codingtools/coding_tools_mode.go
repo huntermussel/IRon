@@ -57,10 +57,10 @@ func (CodingToolsMode) OnEvent(_ context.Context, e *mw.Event) (mw.Decision, err
 
 func baseTools() []llms.Tool {
 	return []llms.Tool{
-		funcTool("ls", "List files", map[string]any{
+		funcTool("ls", "List files in a directory. ALWAYS use relative paths. Use '.' for the current directory.", map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"path": map[string]any{"type": "string", "description": "directory path"},
+				"path": map[string]any{"type": "string", "description": "Relative path to the directory (e.g. '.', 'internal', '../')"},
 			},
 			"required": []string{"path"},
 		}),
@@ -87,14 +87,14 @@ func baseTools() []llms.Tool {
 			},
 			"required": []string{"a", "b"},
 		}),
-		funcTool("pwd", "Show cwd", map[string]any{
+		funcTool("pwd", "Show the current working directory path. Use this first to orient yourself.", map[string]any{
 			"type":       "object",
 			"properties": map[string]any{},
 		}),
-		funcTool("read_file", "Read file", map[string]any{
+		funcTool("read_file", "Read a file. Use relative paths. If you need to summarize a codebase, read files one by one after listing them.", map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"path": map[string]any{"type": "string"},
+				"path": map[string]any{"type": "string", "description": "Relative path to the file"},
 			},
 			"required": []string{"path"},
 		}),
@@ -146,13 +146,17 @@ func (CodingToolsExec) OnEvent(_ context.Context, e *mw.Event) (mw.Decision, err
 	}
 
 	outputs := make([]string, 0, len(raw))
+	handled := false
 	for _, tc := range raw {
-		out := runTool(tc)
-		if strings.TrimSpace(out) != "" {
-			outputs = append(outputs, out)
+		out, ok := runTool(tc)
+		if ok {
+			handled = true
+			if strings.TrimSpace(out) != "" {
+				outputs = append(outputs, out)
+			}
 		}
 	}
-	if len(outputs) == 0 {
+	if !handled {
 		return mw.Decision{}, nil
 	}
 	text := strings.Join(outputs, "\n\n")
@@ -165,24 +169,24 @@ func (CodingToolsExec) OnEvent(_ context.Context, e *mw.Event) (mw.Decision, err
 
 /* ---------------------------- Tool runners ---------------------------- */
 
-func runTool(tc mw.ToolCall) string {
+func runTool(tc mw.ToolCall) (string, bool) {
 	switch tc.Tool {
 	case "ls":
-		return toolLS(tc.Args)
+		return toolLS(tc.Args), true
 	case "mkdir":
-		return toolMkdir(tc.Args)
+		return toolMkdir(tc.Args), true
 	case "pwd":
-		return toolPwd()
+		return toolPwd(), true
 	case "read_file":
-		return toolRead(tc.Args)
+		return toolRead(tc.Args), true
 	case "write_file":
-		return toolWrite(tc.Args)
+		return toolWrite(tc.Args), true
 	case "find":
-		return toolFind(tc.Args)
+		return toolFind(tc.Args), true
 	case "diff":
-		return toolDiff(tc.Args)
+		return toolDiff(tc.Args), true
 	default:
-		return "tool not supported: " + tc.Tool
+		return "", false
 	}
 }
 
