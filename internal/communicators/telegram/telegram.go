@@ -15,8 +15,16 @@ import (
 	tele "gopkg.in/telebot.v3"
 )
 
+var tLog *log.Logger
+
 func init() {
 	communicators.Register(&Adapter{})
+	os.MkdirAll("bin", 0755)
+	if f, err := os.OpenFile("bin/telegram.log", os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644); err == nil {
+		tLog = log.New(f, "", log.LstdFlags)
+	} else {
+		tLog = log.New(os.Stderr, "", log.LstdFlags)
+	}
 }
 
 type userSession struct {
@@ -42,7 +50,7 @@ func (a *Adapter) ID() string {
 func (a *Adapter) Start(ctx context.Context, gw *gateway.Gateway) error {
 	token := os.Getenv("TELEGRAM_BOT_TOKEN")
 	if token == "" {
-		log.Println("[Telegram] Disabled: TELEGRAM_BOT_TOKEN environment variable not set")
+		tLog.Println("[Telegram] Disabled: TELEGRAM_BOT_TOKEN environment variable not set")
 		return nil
 	}
 
@@ -62,14 +70,14 @@ func (a *Adapter) Start(ctx context.Context, gw *gateway.Gateway) error {
 
 	a.setupHandlers()
 
-	log.Printf("[Telegram] 🤖 Starting Bot... (@%s)", a.bot.Me.Username)
+	tLog.Printf("[Telegram] 🤖 Starting Bot... (@%s)", a.bot.Me.Username)
 
 	// Clean up old sessions periodically
 	go a.cleanupLoop(ctx)
 
 	go func() {
 		<-ctx.Done()
-		log.Println("[Telegram] Shutting down...")
+		tLog.Println("[Telegram] Shutting down...")
 		a.bot.Stop()
 		a.cleanupAllSessions()
 	}()
@@ -107,7 +115,7 @@ func (a *Adapter) handleMessage(c tele.Context) error {
 
 	session, err := a.getSession(context.Background(), chatID)
 	if err != nil {
-		log.Printf("[Telegram] Error getting session for %d: %v", chatID, err)
+		tLog.Printf("[Telegram] Error getting session for %d: %v", chatID, err)
 		return c.Send("⚠️ Error initializing assistant. Please try again later.")
 	}
 
@@ -121,7 +129,7 @@ func (a *Adapter) handleMessage(c tele.Context) error {
 
 	reply, err := session.service.Send(turnCtx, text)
 	if err != nil {
-		log.Printf("[Telegram] Error processing message for %d: %v", chatID, err)
+		tLog.Printf("[Telegram] Error processing message for %d: %v", chatID, err)
 		return c.Send(fmt.Sprintf("⚠️ An error occurred: %v", err))
 	}
 
@@ -130,7 +138,7 @@ func (a *Adapter) handleMessage(c tele.Context) error {
 	}
 
 	// Telegram messages have a 4096 character limit
-	return sendLongMessage(c, reply)
+	return sendLongMessage(a.bot, c.Chat(), reply)
 }
 
 func (a *Adapter) getSession(ctx context.Context, chatID int64) (*userSession, error) {
@@ -150,8 +158,16 @@ func (a *Adapter) getSession(ctx context.Context, chatID int64) (*userSession, e
 		return session, nil
 	}
 
-	log.Printf("[Telegram] Initializing new IRon session for chat %d...", chatID)
-	service, _, _, _, cleanup, err := a.gw.InitService(ctx)
+	tLog.Printf("[Telegram] Initializing new IRon session for chat %d...", chatID)
+
+	statusCb := func(msg string) {
+		_ = sendLongMessage(a.bot, &tele.Chat{ID: chatID}, msg)
+	}
+	streamCb := func(msg string) {
+		// no-op to prevent stdout spam
+	}
+
+	service, _, _, _, cleanup, err := a.gw.InitService(ctx, chat.WithStatusCallback(statusCb), chat.WithStreamCallback(streamCb))
 	if err != nil {
 		return nil, err
 	}
@@ -179,7 +195,7 @@ func (a *Adapter) cleanupLoop(ctx context.Context) {
 			for id, session := range a.sessions {
 				// Expire sessions inactive for more than 2 hours
 				if time.Since(session.lastUse) > 2*time.Hour {
-					log.Printf("[Telegram] Cleaning up inactive session for chat %d", id)
+					tLog.Printf("[Telegram] Cleaning up inactive session for chat %d", id)
 					session.cleanup()
 					delete(a.sessions, id)
 				}
@@ -199,17 +215,17 @@ func (a *Adapter) cleanupAllSessions() {
 }
 
 // sendLongMessage splits and sends text if it exceeds Telegram's 4096 char limit.
-func sendLongMessage(c tele.Context, text string) error {
+func sendLongMessage(bot *tele.Bot, to tele.Recipient, text string, opts ...interface{}) error {
 	const maxLen = 4000 // Leave a little buffer
 	var err error
 
 	for len(text) > 0 {
 		if len(text) > maxLen {
 			chunk := text[:maxLen]
-			err = c.Send(chunk)
+			_, err = bot.Send(to, chunk, opts...)
 			text = text[maxLen:]
 		} else {
-			err = c.Send(text)
+			_, err = bot.Send(to, text, opts...)
 			text = ""
 		}
 		if err != nil {

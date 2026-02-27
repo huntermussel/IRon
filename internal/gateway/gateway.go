@@ -63,7 +63,7 @@ func (g *Gateway) LoadConfig() {
 	}
 }
 
-func (g *Gateway) InitService(ctx context.Context) (*chat.Service, string, llm.Provider, string, func(), error) {
+func (g *Gateway) InitService(ctx context.Context, extraOpts ...chat.ServiceOption) (*chat.Service, string, llm.Provider, string, func(), error) {
 	// Default values
 	model := "llama3.2"
 	provider := llm.ProviderOllama
@@ -143,6 +143,7 @@ func (g *Gateway) InitService(ctx context.Context) (*chat.Service, string, llm.P
 		chat.WithMemoryStore(memStore),
 		chat.WithSkills(skillMgr),
 	}
+	opts = append(opts, extraOpts...)
 
 	service := chat.NewService(adapter, opts...)
 
@@ -166,13 +167,11 @@ func (g *Gateway) Execute(ctx context.Context, input string) error {
 	turnCtx, cancel := context.WithTimeout(ctx, 60*time.Minute)
 	defer cancel()
 
-	resp, err := service.Send(turnCtx, input)
+	_, err = service.Send(turnCtx, input)
 	if err != nil {
 		return err
 	}
-	if resp != "" {
-		fmt.Println(resp)
-	}
+	fmt.Println()
 	return nil
 }
 

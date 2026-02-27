@@ -21,9 +21,23 @@ type Service struct {
 	mws      *middleware.Chain
 	mem      *memory.Store
 	skillMgr *skills.Manager
+	statusCb func(string)
+	streamCb func(string)
 }
 
 type ServiceOption func(*Service)
+
+func WithStatusCallback(cb func(string)) ServiceOption {
+	return func(s *Service) {
+		s.statusCb = cb
+	}
+}
+
+func WithStreamCallback(cb func(string)) ServiceOption {
+	return func(s *Service) {
+		s.streamCb = cb
+	}
+}
 
 func WithMiddlewareChain(chain *middleware.Chain) ServiceOption {
 	return func(s *Service) {
@@ -53,6 +67,12 @@ func NewService(adapter Adapter, opts ...ServiceOption) *Service {
 	for _, opt := range opts {
 		opt(s)
 	}
+	if s.statusCb == nil {
+		s.statusCb = func(msg string) { fmt.Println(msg) }
+	}
+	if s.streamCb == nil {
+		s.streamCb = func(msg string) { fmt.Print(msg) }
+	}
 	return s
 }
 
@@ -78,7 +98,7 @@ func (s *Service) SendWithContext(ctx context.Context, input string, mwCtx map[s
 	inputWithContext := input
 	if s.mem != nil {
 		if hits := s.mem.Query("default", input, 2); len(hits) > 0 {
-			inputWithContext = fmt.Sprintf("Context:\n%s\n\nUser: %s", strings.Join(hits, "\n"), input)
+			inputWithContext = fmt.Sprintf("<context>\n%s\n</context>\n\n%s", strings.Join(hits, "\n"), input)
 		}
 	}
 
@@ -106,7 +126,7 @@ func (s *Service) SendWithContext(ctx context.Context, input string, mwCtx map[s
 			if strings.TrimSpace(updated) != "" {
 				s.history = append(s.history, Message{Role: RoleUser, Content: input})
 				s.history = append(s.history, Message{Role: RoleAssistant, Content: updated})
-				fmt.Println(updated) // Print to user since loop won't run
+				s.streamCb(updated + "\n") // Print to user since loop won't run
 				return updated, nil
 			}
 			if strings.TrimSpace(canceled.Reason) == "" {
@@ -183,12 +203,12 @@ func (s *Service) SendWithContext(ctx context.Context, input string, mwCtx map[s
 		var currentTextBuilder strings.Builder
 		streamCallback := func(chunk string) {
 			currentTextBuilder.WriteString(chunk)
-			fmt.Print(chunk)
+			s.streamCb(chunk)
 		}
 
 		assistantText, toolCalls, err := s.adapter.ReplyStream(ctx, messages, llmParams, streamCallback)
 		if i == 0 {
-			fmt.Println()
+			s.streamCb("\n")
 		}
 
 		if err != nil {
@@ -217,7 +237,7 @@ func (s *Service) SendWithContext(ctx context.Context, input string, mwCtx map[s
 			go func(i int, t ToolCall) {
 				defer wg.Done()
 
-				fmt.Printf("🔧 Tool Call: %s(%s)\n", t.Name, t.Arguments)
+				s.statusCb(fmt.Sprintf("🔧 Tool Call: %s(%s)", t.Name, t.Arguments))
 				var result string
 
 				// Try built-in skills first
@@ -235,11 +255,15 @@ func (s *Service) SendWithContext(ctx context.Context, input string, mwCtx map[s
 				} else {
 					// Not in built-in skills? Try Middleware execution!
 					mwResult, mwErr := s.executeMiddlewareTool(ctx, mwCtx, t)
-					if mwErr == nil && mwResult != "" {
+					if mwErr == nil {
 						result = mwResult
 					} else {
 						result = fmt.Sprintf("Error: Tool '%s' not found.", t.Name)
 					}
+				}
+
+				if result == "" {
+					result = "Success (no output)"
 				}
 
 				// Truncate result for display but keep full for LLM
@@ -247,7 +271,7 @@ func (s *Service) SendWithContext(ctx context.Context, input string, mwCtx map[s
 				if len(displayResult) > 200 {
 					displayResult = displayResult[:200] + "..."
 				}
-				fmt.Printf("   Result: %s\n", displayResult)
+				s.statusCb(fmt.Sprintf("   Result: %s", displayResult))
 
 				// Store the result safely at its original index
 				results[i] = Message{
