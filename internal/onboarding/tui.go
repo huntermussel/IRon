@@ -212,7 +212,7 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else if m.provider == "anthropic" {
 				models = []list.Item{item{title: "claude-3-5-sonnet-latest", desc: "Best Anthropic model"}}
 			} else {
-				models = []list.Item{item{title: "gemini-1.5-flash", desc: "Fast Google model"}, item{title: "gemini-1.5-pro", desc: "Powerful Google model"}}
+				models = []list.Item{item{title: "gemini-2.5-flash", desc: "Fast Google model"}, item{title: "gemini-2.5-pro", desc: "Powerful Google model"}}
 			}
 			m.list.SetItems(models)
 			m.list.Title = "Select Cloud Model"

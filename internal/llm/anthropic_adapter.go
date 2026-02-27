@@ -20,8 +20,13 @@ func NewAnthropicAdapter(model string) (chat.Adapter, error) {
 	opts := []anthropic.Option{
 		anthropic.WithModel(model),
 	}
-	if token := os.Getenv("ANTHROPIC_API_KEY"); token != "" {
-		opts = append(opts, anthropic.WithToken(token))
+	apiKey := os.Getenv("IRON_ANTHROPIC_API_KEY")
+	if apiKey == "" {
+		apiKey = os.Getenv("ANTHROPIC_API_KEY")
+	}
+
+	if apiKey != "" {
+		opts = append(opts, anthropic.WithToken(apiKey))
 	}
 
 	client, err := anthropic.New(opts...)

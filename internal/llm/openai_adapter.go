@@ -23,8 +23,13 @@ func NewOpenAIAdapter(model, baseURL string) (chat.Adapter, error) {
 	if baseURL != "" {
 		opts = append(opts, openai.WithBaseURL(baseURL))
 	}
-	if token := os.Getenv("OPENAI_API_KEY"); token != "" {
-		opts = append(opts, openai.WithToken(token))
+	apiKey := os.Getenv("IRON_OPENAI_API_KEY")
+	if apiKey == "" {
+		apiKey = os.Getenv("OPENAI_API_KEY")
+	}
+
+	if apiKey != "" {
+		opts = append(opts, openai.WithToken(apiKey))
 	}
 
 	client, err := openai.New(opts...)

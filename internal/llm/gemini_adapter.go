@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 
 	"iron/internal/chat"
 	"iron/internal/middleware"
@@ -20,17 +21,28 @@ type GeminiAdapter struct {
 func NewGeminiAdapter(model, baseURL string) (chat.Adapter, error) {
 	effectiveModel := model
 	if effectiveModel == "" {
-		effectiveModel = googleai.DefaultOptions().DefaultModel
+		effectiveModel = "gemini-2.5-flash"
+	}
+	if !strings.HasPrefix(effectiveModel, "models/") && !strings.HasPrefix(effectiveModel, "tunedModels/") {
+		effectiveModel = "models/" + effectiveModel
 	}
 
 	opts := []googleai.Option{
 		googleai.WithDefaultModel(effectiveModel),
 	}
-	if baseURL != "" {
-		opts = append(opts, googleai.WithRest())
+
+	apiKey := os.Getenv("IRON_GEMINI_API_KEY")
+	if apiKey == "" {
+		apiKey = os.Getenv("GEMINI_API_KEY")
 	}
-	if key := os.Getenv("GOOGLE_API_KEY"); key != "" {
-		opts = append(opts, googleai.WithAPIKey(key))
+	if apiKey == "" {
+		apiKey = os.Getenv("GOOGLE_API_KEY")
+	}
+
+	if apiKey != "" {
+		opts = append(opts, googleai.WithAPIKey(apiKey))
+	} else {
+		return nil, fmt.Errorf("Gemini API key not found")
 	}
 
 	ctx := context.Background()
@@ -39,10 +51,7 @@ func NewGeminiAdapter(model, baseURL string) (chat.Adapter, error) {
 		return nil, err
 	}
 
-	return &GeminiAdapter{
-		client: client,
-		model:  effectiveModel,
-	}, nil
+	return &GeminiAdapter{client: client, model: effectiveModel}, nil
 }
 
 func (a *GeminiAdapter) ReplyStream(ctx context.Context, history []chat.Message, params *middleware.LLMParams, streamFn func(string)) (string, []chat.ToolCall, error) {
@@ -52,21 +61,17 @@ func (a *GeminiAdapter) ReplyStream(ctx context.Context, history []chat.Message,
 	opts = append(opts, llms.WithModel(a.model))
 	if params != nil {
 		if params.Model != "" {
-			opts = append(opts, llms.WithModel(params.Model))
-		}
-		if params.Temperature != 0 {
-			opts = append(opts, llms.WithTemperature(params.Temperature))
-		}
-		if params.TopP != 0 {
-			opts = append(opts, llms.WithTopP(params.TopP))
-		}
-		if params.MaxTokens != 0 {
-			opts = append(opts, llms.WithMaxTokens(params.MaxTokens))
+			m := params.Model
+			if !strings.HasPrefix(m, "models/") && !strings.HasPrefix(m, "tunedModels/") {
+				m = "models/" + m
+			}
+			opts = append(opts, llms.WithModel(m))
 		}
 		if len(params.Tools) > 0 {
 			opts = append(opts, llms.WithTools(params.Tools))
 		}
 	}
+
 	opts = append(opts, llms.WithStreamingFunc(func(_ context.Context, chunk []byte) error {
 		if streamFn != nil {
 			streamFn(string(chunk))
@@ -79,7 +84,7 @@ func (a *GeminiAdapter) ReplyStream(ctx context.Context, history []chat.Message,
 		return "", nil, err
 	}
 	if len(resp.Choices) == 0 {
-		return "", nil, fmt.Errorf("empty response from Gemini model")
+		return "", nil, fmt.Errorf("empty response")
 	}
 
 	choice := resp.Choices[0]
@@ -89,12 +94,9 @@ func (a *GeminiAdapter) ReplyStream(ctx context.Context, history []chat.Message,
 			continue
 		}
 		toolCalls = append(toolCalls, chat.ToolCall{
-			ID:        tc.ID,
-			Name:      tc.FunctionCall.Name,
-			Arguments: tc.FunctionCall.Arguments,
+			ID: tc.ID, Name: tc.FunctionCall.Name, Arguments: tc.FunctionCall.Arguments,
 		})
 	}
-
 	return choice.Content, toolCalls, nil
 }
 
@@ -111,31 +113,20 @@ func convertHistory(history []chat.Message) []llms.MessageContent {
 			}
 			for _, tc := range m.ToolCalls {
 				parts = append(parts, llms.ToolCall{
-					ID:   tc.ID,
-					Type: "function",
-					FunctionCall: &llms.FunctionCall{
-						Name:      tc.Name,
-						Arguments: tc.Arguments,
-					},
+					ID: tc.ID, Type: "function", FunctionCall: &llms.FunctionCall{Name: tc.Name, Arguments: tc.Arguments},
 				})
 			}
 			if len(parts) == 0 {
 				parts = append(parts, llms.TextPart(" "))
 			}
-			messages = append(messages, llms.MessageContent{
-				Role:  llms.ChatMessageTypeAI,
-				Parts: parts,
-			})
+			messages = append(messages, llms.MessageContent{Role: llms.ChatMessageTypeAI, Parts: parts})
 		case chat.RoleSystem:
 			messages = append(messages, llms.TextParts(llms.ChatMessageTypeSystem, m.Content))
 		case chat.RoleTool:
 			messages = append(messages, llms.MessageContent{
 				Role: llms.ChatMessageTypeTool,
 				Parts: []llms.ContentPart{
-					llms.ToolCallResponse{
-						ToolCallID: m.ToolCallID,
-						Content:    m.Content,
-					},
+					llms.ToolCallResponse{ToolCallID: m.ToolCallID, Name: m.ToolName, Content: m.Content},
 				},
 			})
 		}

@@ -73,8 +73,12 @@ func (g *Gateway) initService(ctx context.Context) (*chat.Service, string, llm.P
 	if p := os.Getenv("IRON_PROVIDER"); p != "" {
 		provider = llm.Provider(p)
 	}
-	if u := os.Getenv("IRON_OLLAMA_URL"); u != "" {
-		baseURL = u
+	// Only override baseURL with IRON_OLLAMA_URL if we are actually using Ollama.
+	// This prevents passing a local Ollama URL to cloud providers like Gemini/OpenAI, which causes 404s.
+	if provider == llm.ProviderOllama {
+		if u := os.Getenv("IRON_OLLAMA_URL"); u != "" {
+			baseURL = u
+		}
 	}
 	if apiKey != "" {
 		keyVar := "IRON_" + strings.ToUpper(string(provider)) + "_API_KEY"
@@ -113,12 +117,12 @@ func (g *Gateway) initService(ctx context.Context) (*chat.Service, string, llm.P
 
 	// Skills
 	skillMgr := skills.NewManager()
-	skillMgr.Register(&skills.ShellSkill{})
-	// skillMgr.Register(&skills.FileSkill{}) // Redundant with codingtools middleware
-	skillMgr.Register(&skills.FetchSkill{})
-	skillMgr.Register(&skills.HelpSkill{})
-	skillMgr.Register(&skills.MemorySkill{Store: memStore})
-	skillMgr.Register(&skills.BrowserSkill{Controller: browserCtrl})
+	// skillMgr.Register(&skills.ShellSkill{})
+	// // skillMgr.Register(&skills.FileSkill{}) // Redundant with codingtools middleware
+	// skillMgr.Register(&skills.FetchSkill{})
+	// skillMgr.Register(&skills.HelpSkill{})
+	// skillMgr.Register(&skills.MemorySkill{Store: memStore})
+	// skillMgr.Register(&skills.BrowserSkill{Controller: browserCtrl})
 
 	opts := []chat.ServiceOption{
 		chat.WithMiddlewareChain(chain),
