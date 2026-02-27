@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -98,12 +99,27 @@ func (s *Server) Start(ctx context.Context) error {
 	mux.HandleFunc("/api/events", s.handleEvents)
 	mux.HandleFunc("/api/plugins", s.handlePlugins)
 
-	// Serve static files
+	// Serve static files (handling SPA routing)
 	staticFS, err := fs.Sub(staticFiles, "static")
 	if err != nil {
 		return fmt.Errorf("failed to load static files: %w", err)
 	}
-	mux.Handle("/", http.FileServer(http.FS(staticFS)))
+	fileServer := http.FileServer(http.FS(staticFS))
+
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		path := r.URL.Path
+		// Check if the file exists in the embed FS
+		f, err := staticFS.Open(strings.TrimPrefix(path, "/"))
+		if err == nil {
+			f.Close()
+			fileServer.ServeHTTP(w, r)
+			return
+		}
+
+		// If the file doesn't exist (e.g. /dashboard or nested route), serve index.html
+		r.URL.Path = "/"
+		fileServer.ServeHTTP(w, r)
+	})
 
 	srv := &http.Server{
 		Addr:    fmt.Sprintf(":%d", s.port),
