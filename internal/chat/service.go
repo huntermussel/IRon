@@ -134,14 +134,33 @@ func (s *Service) SendWithContext(ctx context.Context, input string, mwCtx map[s
 		}
 	}
 
+	// Deduplicate tools
+	if llmParams != nil && len(llmParams.Tools) > 1 {
+		unique := make([]llms.Tool, 0, len(llmParams.Tools))
+		seen := make(map[string]bool)
+		for _, t := range llmParams.Tools {
+			if t.Function == nil {
+				unique = append(unique, t)
+				continue
+			}
+			if !seen[t.Function.Name] {
+				seen[t.Function.Name] = true
+				unique = append(unique, t)
+			}
+		}
+		llmParams.Tools = unique
+	}
+
 	// 4. Construct messages for this turn
 	messages := make([]Message, 0, len(s.history)+2)
 
 	// System Prompt
-	systemPrompt := fmt.Sprintf("You are IRon, a capable AI assistant. Current time: %s. ", time.Now().Format(time.RFC1123))
+	systemPrompt := fmt.Sprintf("You are IRon, a highly capable AI assistant running in a terminal. Current time: %s. ", time.Now().Format(time.RFC1123))
 	if len(llmParams.Tools) > 0 {
-		systemPrompt += "You have access to tools. Use them to answer questions or perform actions. " +
-			"When you use a tool, I will execute it and give you the result. "
+		systemPrompt += "CRITICAL: You MUST use the provided tools to fetch real-world data or perform actions. " +
+			"DO NOT apologize, DO NOT give AI disclaimers (e.g., 'I am an AI', 'I don't have access'), and DO NOT imagine data. " +
+			"If a tool exists for a request (like 'shell' for 'pwd' or 'ls'), you ARE REQUIRED to call it. " +
+			"Your responses must be direct and based ONLY on the tool results when tools are available."
 	}
 	messages = append(messages, Message{Role: RoleSystem, Content: systemPrompt})
 

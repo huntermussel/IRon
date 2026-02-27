@@ -144,11 +144,13 @@ func (g *Gateway) Execute(ctx context.Context, input string) error {
 	turnCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
 
-	_, err = service.Send(turnCtx, input)
+	resp, err := service.Send(turnCtx, input)
 	if err != nil {
 		return err
 	}
-	fmt.Println()
+	if resp != "" {
+		fmt.Println(resp)
+	}
 	return nil
 }
 

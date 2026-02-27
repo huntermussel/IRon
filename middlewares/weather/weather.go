@@ -9,6 +9,8 @@ import (
 
 	"iron/internal/middleware"
 	"iron/internal/nlu"
+
+	"github.com/tmc/langchaingo/llms"
 )
 
 // WeatherMiddleware handles weather requests.
@@ -43,22 +45,84 @@ func (m *WeatherMiddleware) Priority() int {
 	return 110
 }
 
-// ShouldLoad checks if the input matches the weather intent using the shared NLU engine.
+// ShouldLoad checks if the input matches the weather intent or contains tool calls.
 func (m *WeatherMiddleware) ShouldLoad(ctx context.Context, e *middleware.Event) bool {
-	if e.Name != middleware.EventBeforeLLMRequest {
-		return false
+	if e.Name == middleware.EventBeforeLLMRequest {
+		return true
 	}
-
-	result := m.nluEngine.Parse(e.UserText)
-	return result.Intent == "get_weather"
+	if e.Name == middleware.EventAfterLLMResponse {
+		if e.Context == nil {
+			return false
+		}
+		calls, ok := e.Context["tool_calls"].([]middleware.ToolCall)
+		if !ok {
+			return false
+		}
+		for _, tc := range calls {
+			if tc.Tool == "get_weather" {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (m *WeatherMiddleware) OnEvent(ctx context.Context, e *middleware.Event) (middleware.Decision, error) {
-	result := m.nluEngine.Parse(e.UserText)
+	if e.Name == middleware.EventBeforeLLMRequest {
+		result := m.nluEngine.Parse(e.UserText)
+		if result.Intent == "get_weather" {
+			loc, _ := result.Slots["location"]
+			return m.handleWeather(ctx, loc)
+		}
 
-	loc := "Berlin"
-	if l, ok := result.Slots["location"]; ok && l != "" {
-		loc = l
+		// Inject tool schema for LLM
+		params := &middleware.LLMParams{}
+		if e.Params != nil {
+			*params = *e.Params
+		}
+		params.Tools = append(params.Tools, weatherTool())
+		if params.ToolChoice == nil {
+			params.ToolChoice = "auto"
+		}
+		return middleware.Decision{OverrideParams: params, Reason: "weather: injected tool schema"}, nil
+	}
+
+	if e.Name == middleware.EventAfterLLMResponse {
+		calls, _ := e.Context["tool_calls"].([]middleware.ToolCall)
+		for _, tc := range calls {
+			if tc.Tool == "get_weather" {
+				loc, _ := tc.Args["location"].(string)
+				return m.handleWeather(ctx, loc)
+			}
+		}
+	}
+
+	return middleware.Decision{}, nil
+}
+
+func weatherTool() llms.Tool {
+	return llms.Tool{
+		Type: "function",
+		Function: &llms.FunctionDefinition{
+			Name:        "get_weather",
+			Description: "Get the current weather for a specific location.",
+			Parameters: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"location": map[string]any{
+						"type":        "string",
+						"description": "The city and country, e.g., San Francisco, CA",
+					},
+				},
+				"required": []string{"location"},
+			},
+		},
+	}
+}
+
+func (m *WeatherMiddleware) handleWeather(ctx context.Context, loc string) (middleware.Decision, error) {
+	if loc == "" {
+		loc = "Berlin"
 	}
 
 	// 1. Geocoding to get Lat/Lon

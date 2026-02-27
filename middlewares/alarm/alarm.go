@@ -216,21 +216,25 @@ func (AlarmMode) OnEvent(_ context.Context, e *mw.Event) (mw.Decision, error) {
 		return mw.Decision{}, nil
 	}
 
-	intent, conf, _ := getAlarmNLU(e)
-	if intent != "set_alarm" {
-		return mw.Decision{}, nil
-	}
-
-	if conf < alarmLow || conf >= alarmHigh {
-		return mw.Decision{}, nil
-	}
-
 	params := &mw.LLMParams{}
 	if e.Params != nil {
 		*params = *e.Params
 	}
 
 	params.Tools = upsertTool(params.Tools, AlarmSetTool())
+
+	intent, conf, _ := getAlarmNLU(e)
+	if intent != "set_alarm" || conf < alarmLow || conf >= alarmHigh {
+		// Even if not triggered by NLU, we provide the tool to the LLM
+		// but we don't return an "OverrideParams" decision unless we want
+		// to force tool usage or modify current params.
+		// Actually, we should always return it to ensure the tool is there.
+		return mw.Decision{
+			OverrideParams: params,
+			Reason:         "alarm_mode: providing tool to LLM",
+		}, nil
+	}
+
 	if params.ToolChoice == nil {
 		params.ToolChoice = "auto"
 	}

@@ -3,25 +3,33 @@ package llm
 import (
 	"context"
 	"fmt"
-	"github.com/tmc/langchaingo/llms"
-	"github.com/tmc/langchaingo/llms/ollama"
 	"iron/internal/chat"
 	"iron/internal/middleware"
-	"os"
+	"strings"
+
+	"github.com/tmc/langchaingo/llms"
+	"github.com/tmc/langchaingo/llms/openai"
 )
 
 type OllamaAdapter struct {
-	client *ollama.LLM
+	client *openai.LLM
 	model  string
 }
 
 func NewOllamaAdapter(model, baseURL string) (chat.Adapter, error) {
-	var opts []ollama.Option
-
-	if baseURL != "" {
-		opts = append(opts, ollama.WithServerURL(baseURL))
+	if baseURL == "" {
+		baseURL = "http://localhost:11434/v1"
+	} else if !strings.HasSuffix(baseURL, "/v1") && !strings.HasSuffix(baseURL, "/v1/") {
+		baseURL = strings.TrimSuffix(baseURL, "/") + "/v1"
 	}
-	client, err := ollama.New(opts...)
+
+	opts := []openai.Option{
+		openai.WithBaseURL(baseURL),
+		openai.WithToken("ollama"), // dummy token
+		openai.WithModel(model),
+	}
+
+	client, err := openai.New(opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -103,14 +111,19 @@ func (a *OllamaAdapter) ReplyStream(ctx context.Context, history []chat.Message,
 
 		if len(params.Tools) > 0 {
 			opts = append(opts, llms.WithTools(params.Tools))
+			opts = append(opts, llms.WithToolChoice("auto"))
 		}
 	}
-	opts = append(opts, llms.WithStreamingFunc(func(_ context.Context, chunk []byte) error {
-		if streamFn != nil {
-			streamFn(string(chunk))
-		}
-		return nil
-	}))
+
+	// Disable streaming if tools are present to ensure stable tool calling output
+	if params == nil || len(params.Tools) == 0 {
+		opts = append(opts, llms.WithStreamingFunc(func(_ context.Context, chunk []byte) error {
+			if streamFn != nil {
+				streamFn(string(chunk))
+			}
+			return nil
+		}))
+	}
 
 	resp, err := a.client.GenerateContent(ctx, messages, opts...)
 	if err != nil {
@@ -128,10 +141,6 @@ func (a *OllamaAdapter) ReplyStream(ctx context.Context, history []chat.Message,
 			Name:      tc.FunctionCall.Name,
 			Arguments: tc.FunctionCall.Arguments,
 		})
-	}
-
-	if len(toolCalls) > 0 {
-		fmt.Fprintf(os.Stderr, "[OllamaAdapter] Model returned %d tool calls\n", len(toolCalls))
 	}
 
 	return resp.Choices[0].Content, toolCalls, nil
