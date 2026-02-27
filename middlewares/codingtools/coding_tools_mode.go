@@ -485,10 +485,8 @@ func toolGit(args map[string]any) string {
 		return "git: arguments are required"
 	}
 
-	// Split arguments carefully to avoid quoting issues
-	fields := strings.Fields(gitArgs)
-
-	cmd := exec.Command("git", fields...)
+	// Use shell to properly handle quotes in arguments like 'commit -m "msg"'
+	cmd := exec.Command("sh", "-c", "git "+gitArgs)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Sprintf("git error: %v\nOutput: %s", err, string(out))

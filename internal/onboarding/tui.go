@@ -56,6 +56,7 @@ const (
 	stateProvider state = iota
 	stateModel
 	stateAPIKey
+	stateTelegram
 	stateMiddlewares
 	stateDone
 )
@@ -69,12 +70,13 @@ func (i item) Description() string { return i.desc }
 func (i item) FilterValue() string { return i.title }
 
 type TUIModel struct {
-	state       state
-	provider    string
-	model       string
-	apiKey      string
-	baseURL     string
-	middlewares []MiddlewareSetting
+	state         state
+	provider      string
+	model         string
+	apiKey        string
+	telegramToken string
+	baseURL       string
+	middlewares   []MiddlewareSetting
 
 	list     list.Model
 	input    textinput.Model
@@ -224,8 +226,17 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			i, ok := m.list.SelectedItem().(item)
 			if ok {
 				m.model = i.title
-				m.state = stateMiddlewares
+				m.state = stateTelegram
+				m.input.Prompt = "Telegram Bot Token (optional): "
+				m.input.SetValue("")
 			}
+		}
+
+	case stateTelegram:
+		m.input, cmd = m.input.Update(msg)
+		if keyMsg, ok := msg.(tea.KeyMsg); ok && keyMsg.String() == "enter" {
+			m.telegramToken = m.input.Value()
+			m.state = stateMiddlewares
 		}
 
 	case stateMiddlewares:
@@ -265,12 +276,15 @@ func (m TUIModel) View() string {
 	s.WriteString("\n\n")
 
 	// Tabs logic (Visual progress)
-	tabs := []string{"Provider", "Model", "Settings", "Middlewares", "Finish"}
+	tabs := []string{"Provider", "Model", "Telegram", "Middlewares", "Finish"}
 	var renderedTabs []string
 	currentTab := int(m.state)
 	if m.state == stateAPIKey {
 		currentTab = 0
 	} // API key is sub-step of provider
+	if m.state > stateAPIKey {
+		currentTab-- // Adjust for stateAPIKey shift
+	}
 
 	for i, t := range tabs {
 		if i == currentTab {
@@ -286,7 +300,7 @@ func (m TUIModel) View() string {
 	switch m.state {
 	case stateProvider, stateModel:
 		content = m.list.View()
-	case stateAPIKey:
+	case stateAPIKey, stateTelegram:
 		content = "\n" + m.input.View() + "\n\n" + helpStyle.Render("Press enter to continue")
 	case stateMiddlewares:
 		var mwView strings.Builder
@@ -330,6 +344,32 @@ func (m TUIModel) saveConfig() tea.Cmd {
 			BaseURL:     m.baseURL,
 			ScriptsDir:  "scripts",
 			Middlewares: m.middlewares,
+		}
+
+		if m.telegramToken != "" {
+			// Find slack/telegram middleware logic or just set an env var
+			found := false
+			for i, mw := range cfg.Middlewares {
+				if mw.ID == "telegram" {
+					if cfg.Middlewares[i].EnvVars == nil {
+						cfg.Middlewares[i].EnvVars = make(map[string]string)
+					}
+					cfg.Middlewares[i].EnvVars["TELEGRAM_BOT_TOKEN"] = m.telegramToken
+					found = true
+					break
+				}
+			}
+			if !found {
+				// We inject it manually into an arbitrary persistent place
+				// since the adapter reads os.Getenv directly.
+				cfg.Middlewares = append(cfg.Middlewares, MiddlewareSetting{
+					ID:      "telegram_bot",
+					Enabled: true,
+					EnvVars: map[string]string{
+						"TELEGRAM_BOT_TOKEN": m.telegramToken,
+					},
+				})
+			}
 		}
 
 		path := "~/.iron/config.json"
