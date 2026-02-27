@@ -56,7 +56,7 @@ const (
 	stateProvider state = iota
 	stateModel
 	stateAPIKey
-	stateTelegram
+	stateCommunication
 	stateMiddlewares
 	stateExportShell
 	stateDone
@@ -71,13 +71,16 @@ func (i item) Description() string { return i.desc }
 func (i item) FilterValue() string { return i.title }
 
 type TUIModel struct {
-	state         state
-	provider      string
-	model         string
-	apiKey        string
-	telegramToken string
-	baseURL       string
-	middlewares   []MiddlewareSetting
+	state          state
+	provider       string
+	model          string
+	apiKey         string
+	telegramToken  string
+	slackToken     string
+	whatsappToken  string
+	signalEndpoint string
+	baseURL        string
+	middlewares    []MiddlewareSetting
 
 	list     list.Model
 	input    textinput.Model
@@ -86,9 +89,10 @@ type TUIModel struct {
 	width    int
 	height   int
 
-	cursor    int // for middleware list
-	tabIndex  int
-	exportEnv bool // export to shell profile?
+	cursor     int // for middleware list/communication fields
+	tabIndex   int
+	exportEnv  bool // export to shell profile?
+	commInputs []textinput.Model
 }
 
 // --- Ollama Discovery ---
@@ -140,6 +144,20 @@ func NewTUIModel() TUIModel {
 	ti.Placeholder = "Enter API Key"
 	ti.Focus()
 
+	commInputs := make([]textinput.Model, 4)
+	for i := range commInputs {
+		commInputs[i] = textinput.New()
+	}
+	commInputs[0].Prompt = "Telegram Bot Token: "
+	commInputs[0].Placeholder = "(Optional) TELEGRAM_BOT_TOKEN"
+	commInputs[0].Focus()
+	commInputs[1].Prompt = "Slack Bot Token: "
+	commInputs[1].Placeholder = "(Optional) SLACK_BOT_TOKEN"
+	commInputs[2].Prompt = "WhatsApp API Token: "
+	commInputs[2].Placeholder = "(Optional) WHATSAPP_TOKEN"
+	commInputs[3].Prompt = "Signal API Endpoint: "
+	commInputs[3].Placeholder = "(Optional) SIGNAL_ENDPOINT"
+
 	// Initial middleware list
 	mwList := middleware.Registered()
 	settings := make([]MiddlewareSetting, len(mwList))
@@ -155,6 +173,7 @@ func NewTUIModel() TUIModel {
 		state:       stateProvider,
 		list:        l,
 		input:       ti,
+		commInputs:  commInputs,
 		middlewares: settings,
 	}
 }
@@ -228,18 +247,48 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			i, ok := m.list.SelectedItem().(item)
 			if ok {
 				m.model = i.title
-				m.state = stateTelegram
-				m.input.Prompt = "Telegram Bot Token (optional): "
-				m.input.SetValue("")
+				m.state = stateCommunication
+				m.cursor = 0
 			}
 		}
 
-	case stateTelegram:
-		m.input, cmd = m.input.Update(msg)
-		if keyMsg, ok := msg.(tea.KeyMsg); ok && keyMsg.String() == "enter" {
-			m.telegramToken = m.input.Value()
-			m.state = stateMiddlewares
+	case stateCommunication:
+		if keyMsg, ok := msg.(tea.KeyMsg); ok {
+			switch keyMsg.String() {
+			case "up":
+				m.cursor--
+				if m.cursor < 0 {
+					m.cursor = len(m.commInputs) - 1
+				}
+			case "down", "tab":
+				m.cursor++
+				if m.cursor > len(m.commInputs)-1 {
+					m.cursor = 0
+				}
+			case "enter":
+				if m.cursor == len(m.commInputs)-1 {
+					m.telegramToken = m.commInputs[0].Value()
+					m.slackToken = m.commInputs[1].Value()
+					m.whatsappToken = m.commInputs[2].Value()
+					m.signalEndpoint = m.commInputs[3].Value()
+					m.state = stateMiddlewares
+					m.cursor = 0
+				} else {
+					m.cursor++
+				}
+			}
 		}
+
+		cmds := make([]tea.Cmd, len(m.commInputs))
+		for i := range m.commInputs {
+			if i == m.cursor {
+				m.commInputs[i].Focus()
+			} else {
+				m.commInputs[i].Blur()
+			}
+			m.commInputs[i], cmds[i] = m.commInputs[i].Update(msg)
+		}
+		cmd = tea.Batch(cmds...)
 
 	case stateMiddlewares:
 		if keyMsg, ok := msg.(tea.KeyMsg); ok {
@@ -291,7 +340,7 @@ func (m TUIModel) View() string {
 	s.WriteString("\n\n")
 
 	// Tabs logic (Visual progress)
-	tabs := []string{"Provider", "Model", "Telegram", "Middlewares", "Export", "Finish"}
+	tabs := []string{"Provider", "Model", "Communication", "Middlewares", "Export", "Finish"}
 	var renderedTabs []string
 	currentTab := int(m.state)
 	if m.state == stateAPIKey {
@@ -315,8 +364,16 @@ func (m TUIModel) View() string {
 	switch m.state {
 	case stateProvider, stateModel:
 		content = m.list.View()
-	case stateAPIKey, stateTelegram:
+	case stateAPIKey:
 		content = "\n" + m.input.View() + "\n\n" + helpStyle.Render("Press enter to continue")
+	case stateCommunication:
+		var commView strings.Builder
+		commView.WriteString("Configure Communicators (Adapters):\nLeave blank if you don't use them.\n\n")
+		for i := range m.commInputs {
+			commView.WriteString(m.commInputs[i].View() + "\n")
+		}
+		commView.WriteString("\n" + helpStyle.Render("↑/↓: switch • enter on last: continue"))
+		content = commView.String()
 	case stateMiddlewares:
 		var mwView strings.Builder
 		mwView.WriteString("Toggle middlewares with [SPACE], Press [ENTER] to finish.\n\n")
@@ -368,33 +425,29 @@ func (m TUIModel) saveConfig() tea.Cmd {
 		}
 
 		if m.exportEnv {
-			exportToShellProfile(cfg, m.telegramToken)
+			exportToShellProfile(cfg, m.telegramToken, m.slackToken, m.whatsappToken, m.signalEndpoint)
 		}
 
+		envVars := map[string]string{}
 		if m.telegramToken != "" {
-			// Find slack/telegram middleware logic or just set an env var
-			found := false
-			for i, mw := range cfg.Middlewares {
-				if mw.ID == "telegram" {
-					if cfg.Middlewares[i].EnvVars == nil {
-						cfg.Middlewares[i].EnvVars = make(map[string]string)
-					}
-					cfg.Middlewares[i].EnvVars["TELEGRAM_BOT_TOKEN"] = m.telegramToken
-					found = true
-					break
-				}
-			}
-			if !found {
-				// We inject it manually into an arbitrary persistent place
-				// since the adapter reads os.Getenv directly.
-				cfg.Middlewares = append(cfg.Middlewares, MiddlewareSetting{
-					ID:      "telegram_bot",
-					Enabled: true,
-					EnvVars: map[string]string{
-						"TELEGRAM_BOT_TOKEN": m.telegramToken,
-					},
-				})
-			}
+			envVars["TELEGRAM_BOT_TOKEN"] = m.telegramToken
+		}
+		if m.slackToken != "" {
+			envVars["SLACK_BOT_TOKEN"] = m.slackToken
+		}
+		if m.whatsappToken != "" {
+			envVars["WHATSAPP_TOKEN"] = m.whatsappToken
+		}
+		if m.signalEndpoint != "" {
+			envVars["SIGNAL_ENDPOINT"] = m.signalEndpoint
+		}
+
+		if len(envVars) > 0 {
+			cfg.Middlewares = append(cfg.Middlewares, MiddlewareSetting{
+				ID:      "communicators_config",
+				Enabled: true,
+				EnvVars: envVars,
+			})
 		}
 
 		path := "~/.iron/config.json"
@@ -435,7 +488,7 @@ func (cfg *Config) SaveToFile(path string) error {
 	return os.WriteFile(path, data, 0644)
 }
 
-func exportToShellProfile(cfg Config, telegramToken string) {
+func exportToShellProfile(cfg Config, telegramToken, slackToken, whatsappToken, signalEndpoint string) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return
@@ -469,5 +522,14 @@ func exportToShellProfile(cfg Config, telegramToken string) {
 
 	if telegramToken != "" {
 		file.WriteString(fmt.Sprintf("export TELEGRAM_BOT_TOKEN=\"%s\"\n", telegramToken))
+	}
+	if slackToken != "" {
+		file.WriteString(fmt.Sprintf("export SLACK_BOT_TOKEN=\"%s\"\n", slackToken))
+	}
+	if whatsappToken != "" {
+		file.WriteString(fmt.Sprintf("export WHATSAPP_TOKEN=\"%s\"\n", whatsappToken))
+	}
+	if signalEndpoint != "" {
+		file.WriteString(fmt.Sprintf("export SIGNAL_ENDPOINT=\"%s\"\n", signalEndpoint))
 	}
 }

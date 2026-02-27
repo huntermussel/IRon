@@ -8,9 +8,15 @@ import (
 	"syscall"
 	"time"
 
+	"sync"
+
+	"iron/internal/communicators"
+	_ "iron/internal/communicators/signal"
+	_ "iron/internal/communicators/slack"
+	_ "iron/internal/communicators/telegram"
+	_ "iron/internal/communicators/whatsapp"
 	"iron/internal/gateway"
 	"iron/internal/onboarding"
-	"iron/internal/telegram"
 
 	"github.com/spf13/cobra"
 )
@@ -42,7 +48,7 @@ Version: ` + version,
 		chatCmd(),
 		execCmd(),
 		onboardCmd(),
-		telegramCmd(),
+		serveCmd(),
 		versionCmd(),
 		doctorCmd(),
 	)
@@ -113,15 +119,12 @@ func execCmd() *cobra.Command {
 	return cmd
 }
 
-func telegramCmd() *cobra.Command {
+func serveCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "telegram",
-		Short: "Start IRon as a Telegram Bot",
+		Use:   "serve",
+		Short: "Start IRon as a background daemon listening to all configured communicators (Telegram, Slack, WhatsApp, Signal)",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			bot, err := telegram.NewBot(cfgFile)
-			if err != nil {
-				return fmt.Errorf("failed to initialize telegram bot: %w", err)
-			}
+			gw := gateway.New(cfgFile)
 
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
@@ -130,11 +133,30 @@ func telegramCmd() *cobra.Command {
 			signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 			go func() {
 				<-sigCh
-				fmt.Println("\nReceived signal, shutting down bot...")
+				fmt.Println("\nReceived signal, shutting down communicators...")
 				cancel()
 			}()
 
-			return bot.Start(ctx)
+			comms := communicators.All()
+			if len(comms) == 0 {
+				fmt.Println("No communicators registered.")
+				return nil
+			}
+
+			fmt.Printf("Starting %d background communicators...\n", len(comms))
+			var wg sync.WaitGroup
+			for _, c := range comms {
+				wg.Add(1)
+				go func(comm communicators.Communicator) {
+					defer wg.Done()
+					if err := comm.Start(ctx, gw); err != nil {
+						fmt.Fprintf(os.Stderr, "Error running communicator %s: %v\n", comm.ID(), err)
+					}
+				}(c)
+			}
+
+			wg.Wait()
+			return nil
 		},
 	}
 }

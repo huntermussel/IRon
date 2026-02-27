@@ -27,10 +27,12 @@ type Gateway struct {
 }
 
 func New(configPath string) *Gateway {
-	return &Gateway{ConfigPath: configPath}
+	g := &Gateway{ConfigPath: configPath}
+	g.LoadConfig()
+	return g
 }
 
-func (g *Gateway) InitService(ctx context.Context) (*chat.Service, string, llm.Provider, string, func(), error) {
+func (g *Gateway) LoadConfig() {
 	// Load environment variables from local .env if present
 	_ = godotenv.Load()
 
@@ -39,21 +41,10 @@ func (g *Gateway) InitService(ctx context.Context) (*chat.Service, string, llm.P
 		_ = godotenv.Load(filepath.Join(home, ".iron", ".env"))
 	}
 
-	// Default values
-	model := "llama3.2"
-	provider := llm.ProviderOllama
-	baseURL := ""
-	apiKey := ""
-
 	// Load from config file if available
 	if g.ConfigPath != "" {
 		if cfg, err := onboarding.LoadFromFile(g.ConfigPath); err == nil {
-			model = cfg.Model
-			provider = llm.Provider(cfg.Provider)
-			baseURL = cfg.BaseURL
-			apiKey = cfg.APIKey
-
-			// Apply middleware settings
+			// Apply middleware settings and credentials (like TELEGRAM_BOT_TOKEN) globally
 			var disabled []string
 			for _, m := range cfg.Middlewares {
 				if !m.Enabled {
@@ -68,6 +59,24 @@ func (g *Gateway) InitService(ctx context.Context) (*chat.Service, string, llm.P
 			if len(disabled) > 0 {
 				os.Setenv("IRON_DISABLED_MIDDLEWARES", strings.Join(disabled, ","))
 			}
+		}
+	}
+}
+
+func (g *Gateway) InitService(ctx context.Context) (*chat.Service, string, llm.Provider, string, func(), error) {
+	// Default values
+	model := "llama3.2"
+	provider := llm.ProviderOllama
+	baseURL := ""
+	apiKey := ""
+
+	// Read from config file logic for primary LLM values
+	if g.ConfigPath != "" {
+		if cfg, err := onboarding.LoadFromFile(g.ConfigPath); err == nil {
+			model = cfg.Model
+			provider = llm.Provider(cfg.Provider)
+			baseURL = cfg.BaseURL
+			apiKey = cfg.APIKey
 		}
 	}
 

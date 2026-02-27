@@ -9,11 +9,15 @@ import (
 	"time"
 
 	"iron/internal/chat"
+	"iron/internal/communicators"
 	"iron/internal/gateway"
 
-	"github.com/joho/godotenv"
 	tele "gopkg.in/telebot.v3"
 )
+
+func init() {
+	communicators.Register(&Adapter{})
+}
 
 type userSession struct {
 	service *chat.Service
@@ -22,21 +26,24 @@ type userSession struct {
 	mu      sync.Mutex
 }
 
-// BotAdapter runs IRon as a Telegram Bot.
-type BotAdapter struct {
+// Adapter runs IRon as a Telegram Bot.
+type Adapter struct {
 	bot        *tele.Bot
 	gw         *gateway.Gateway
 	sessions   map[int64]*userSession
 	sessionsMu sync.RWMutex
 }
 
-// NewBot creates a new Telegram Bot adapter.
-func NewBot(configPath string) (*BotAdapter, error) {
-	_ = godotenv.Load()
+func (a *Adapter) ID() string {
+	return "telegram"
+}
 
+// Start begins listening for Telegram messages.
+func (a *Adapter) Start(ctx context.Context, gw *gateway.Gateway) error {
 	token := os.Getenv("TELEGRAM_BOT_TOKEN")
 	if token == "" {
-		return nil, fmt.Errorf("TELEGRAM_BOT_TOKEN environment variable is required")
+		log.Println("[Telegram] Disabled: TELEGRAM_BOT_TOKEN environment variable not set")
+		return nil
 	}
 
 	pref := tele.Settings{
@@ -46,67 +53,61 @@ func NewBot(configPath string) (*BotAdapter, error) {
 
 	b, err := tele.NewBot(pref)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create telegram bot: %w", err)
+		return fmt.Errorf("failed to create telegram bot: %w", err)
 	}
 
-	adapter := &BotAdapter{
-		bot:      b,
-		gw:       gateway.New(configPath),
-		sessions: make(map[int64]*userSession),
-	}
+	a.bot = b
+	a.gw = gw
+	a.sessions = make(map[int64]*userSession)
 
-	adapter.setupHandlers()
-	return adapter, nil
-}
+	a.setupHandlers()
 
-// Start begins listening for Telegram messages.
-func (b *BotAdapter) Start(ctx context.Context) error {
-	log.Printf("🤖 Starting IRon Telegram Bot... (@%s)", b.bot.Me.Username)
+	log.Printf("[Telegram] 🤖 Starting Bot... (@%s)", a.bot.Me.Username)
 
 	// Clean up old sessions periodically
-	go b.cleanupLoop(ctx)
+	go a.cleanupLoop(ctx)
 
 	go func() {
 		<-ctx.Done()
-		log.Println("Shutting down Telegram bot...")
-		b.bot.Stop()
-		b.cleanupAllSessions()
+		log.Println("[Telegram] Shutting down...")
+		a.bot.Stop()
+		a.cleanupAllSessions()
 	}()
 
-	b.bot.Start()
+	a.bot.Start()
 	return nil
 }
 
-func (b *BotAdapter) setupHandlers() {
-	b.bot.Handle("/start", func(c tele.Context) error {
+func (a *Adapter) setupHandlers() {
+	a.bot.Handle("/start", func(c tele.Context) error {
 		return c.Send("👋 Welcome to IRon! I am your personal AI assistant. How can I help you today?")
 	})
 
-	b.bot.Handle("/clear", func(c tele.Context) error {
+	a.bot.Handle("/clear", func(c tele.Context) error {
 		chatID := c.Chat().ID
-		b.sessionsMu.Lock()
-		if session, exists := b.sessions[chatID]; exists {
+		a.sessionsMu.Lock()
+		if session, exists := a.sessions[chatID]; exists {
 			session.mu.Lock()
 			session.service.Clear()
 			session.mu.Unlock()
 		}
-		b.sessionsMu.Unlock()
+		a.sessionsMu.Unlock()
 		return c.Send("🧹 Conversation context cleared.")
 	})
 
-	b.bot.Handle(tele.OnText, b.handleMessage)
+	a.bot.Handle(tele.OnText, a.handleMessage)
 }
 
-func (b *BotAdapter) handleMessage(c tele.Context) error {
+func (a *Adapter) handleMessage(c tele.Context) error {
 	chatID := c.Chat().ID
 	text := c.Text()
 
 	// Provide typing indicator to the user
 	_ = c.Notify(tele.Typing)
 
-	session, err := b.getSession(context.Background(), chatID)
+	session, err := a.getSession(context.Background(), chatID)
 	if err != nil {
-		log.Printf("Error getting session for %d: %v", chatID, err)
+		log.Printf("[Telegram] Error getting session for %d: %v", chatID, err)
 		return c.Send("⚠️ Error initializing assistant. Please try again later.")
 	}
 
@@ -115,12 +116,12 @@ func (b *BotAdapter) handleMessage(c tele.Context) error {
 	session.lastUse = time.Now()
 
 	// Give a generous timeout for complex operations via Telegram
-	turnCtx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	turnCtx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 	defer cancel()
 
 	reply, err := session.service.Send(turnCtx, text)
 	if err != nil {
-		log.Printf("Error processing message for %d: %v", chatID, err)
+		log.Printf("[Telegram] Error processing message for %d: %v", chatID, err)
 		return c.Send(fmt.Sprintf("⚠️ An error occurred: %v", err))
 	}
 
@@ -132,25 +133,25 @@ func (b *BotAdapter) handleMessage(c tele.Context) error {
 	return sendLongMessage(c, reply)
 }
 
-func (b *BotAdapter) getSession(ctx context.Context, chatID int64) (*userSession, error) {
-	b.sessionsMu.RLock()
-	session, exists := b.sessions[chatID]
-	b.sessionsMu.RUnlock()
+func (a *Adapter) getSession(ctx context.Context, chatID int64) (*userSession, error) {
+	a.sessionsMu.RLock()
+	session, exists := a.sessions[chatID]
+	a.sessionsMu.RUnlock()
 
 	if exists {
 		return session, nil
 	}
 
-	b.sessionsMu.Lock()
-	defer b.sessionsMu.Unlock()
+	a.sessionsMu.Lock()
+	defer a.sessionsMu.Unlock()
 
 	// Check again in case it was created while waiting for the lock
-	if session, exists := b.sessions[chatID]; exists {
+	if session, exists := a.sessions[chatID]; exists {
 		return session, nil
 	}
 
-	log.Printf("Initializing new IRon session for chat %d...", chatID)
-	service, _, _, _, cleanup, err := b.gw.InitService(ctx)
+	log.Printf("[Telegram] Initializing new IRon session for chat %d...", chatID)
+	service, _, _, _, cleanup, err := a.gw.InitService(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -160,12 +161,12 @@ func (b *BotAdapter) getSession(ctx context.Context, chatID int64) (*userSession
 		cleanup: cleanup,
 		lastUse: time.Now(),
 	}
-	b.sessions[chatID] = session
+	a.sessions[chatID] = session
 
 	return session, nil
 }
 
-func (b *BotAdapter) cleanupLoop(ctx context.Context) {
+func (a *Adapter) cleanupLoop(ctx context.Context) {
 	ticker := time.NewTicker(30 * time.Minute)
 	defer ticker.Stop()
 
@@ -174,27 +175,27 @@ func (b *BotAdapter) cleanupLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			b.sessionsMu.Lock()
-			for id, session := range b.sessions {
+			a.sessionsMu.Lock()
+			for id, session := range a.sessions {
 				// Expire sessions inactive for more than 2 hours
 				if time.Since(session.lastUse) > 2*time.Hour {
-					log.Printf("Cleaning up inactive session for chat %d", id)
+					log.Printf("[Telegram] Cleaning up inactive session for chat %d", id)
 					session.cleanup()
-					delete(b.sessions, id)
+					delete(a.sessions, id)
 				}
 			}
-			b.sessionsMu.Unlock()
+			a.sessionsMu.Unlock()
 		}
 	}
 }
 
-func (b *BotAdapter) cleanupAllSessions() {
-	b.sessionsMu.Lock()
-	defer b.sessionsMu.Unlock()
-	for _, session := range b.sessions {
+func (a *Adapter) cleanupAllSessions() {
+	a.sessionsMu.Lock()
+	defer a.sessionsMu.Unlock()
+	for _, session := range a.sessions {
 		session.cleanup()
 	}
-	b.sessions = make(map[int64]*userSession)
+	a.sessions = make(map[int64]*userSession)
 }
 
 // sendLongMessage splits and sends text if it exceeds Telegram's 4096 char limit.
