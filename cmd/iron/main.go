@@ -10,6 +10,7 @@ import (
 
 	"iron/internal/gateway"
 	"iron/internal/onboarding"
+	"iron/internal/telegram"
 
 	"github.com/spf13/cobra"
 )
@@ -41,6 +42,7 @@ Version: ` + version,
 		chatCmd(),
 		execCmd(),
 		onboardCmd(),
+		telegramCmd(),
 		versionCmd(),
 		doctorCmd(),
 	)
@@ -109,6 +111,32 @@ func execCmd() *cobra.Command {
 
 	cmd.Flags().IntVarP(&timeout, "timeout", "t", 300, "Execution timeout in seconds")
 	return cmd
+}
+
+func telegramCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "telegram",
+		Short: "Start IRon as a Telegram Bot",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			bot, err := telegram.NewBot(cfgFile)
+			if err != nil {
+				return fmt.Errorf("failed to initialize telegram bot: %w", err)
+			}
+
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+
+			sigCh := make(chan os.Signal, 1)
+			signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+			go func() {
+				<-sigCh
+				fmt.Println("\nReceived signal, shutting down bot...")
+				cancel()
+			}()
+
+			return bot.Start(ctx)
+		},
+	}
 }
 
 func versionCmd() *cobra.Command {

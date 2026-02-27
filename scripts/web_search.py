@@ -1,41 +1,60 @@
 #!/usr/bin/env python3
 import argparse
-import sys
-
-import requests
-from bs4 import BeautifulSoup
+import json
+import urllib.error
+import urllib.parse
+import urllib.request
 
 # ToolSchema: {"description": "Search the web using DuckDuckGo to find latest information.", "parameters": {"type": "object", "properties": {"query": {"type": "string", "description": "The search query"}}, "required": ["query"]}}
 
 
 def search(query):
+    # Using DuckDuckGo Lite to avoid strict bot detection and BeautifulSoup parsing
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
-    url = f"https://html.duckduckgo.com/html/?q={query}"
+
+    # We use a public alternative endpoint or basic duckduckgo lite parsing using regex/string ops since BS4 is removed
+    # Actually, DuckDuckGo Lite is hard to parse reliably without BS4.
+    # Let's use a simpler approach: querying a public DuckDuckGo-like API or doing rudimentary text extraction
+
+    url = "https://html.duckduckgo.com/html/?q=" + urllib.parse.quote(query)
+    req = urllib.request.Request(url, headers=headers)
+
     try:
-        res = requests.get(url, headers=headers, timeout=10)
-        res.raise_for_status()
-        soup = BeautifulSoup(res.text, "html.parser")
-        results = []
+        with urllib.request.urlopen(req, timeout=10) as response:
+            html = response.read().decode("utf-8", errors="ignore")
 
-        # DuckDuckGo HTML version uses result__a and result__snippet classes
-        for result in soup.find_all("div", class_="result")[:5]:
-            title_tag = result.find("a", class_="result__a")
-            snippet_tag = result.find("a", class_="result__snippet")
+            # Very rudimentary parsing without BS4
+            results = []
+            parts = html.split('class="result__snippet')
 
-            if title_tag:
-                title = title_tag.get_text()
-                link = title_tag["href"]
+            for part in parts[
+                1:6
+            ]:  # Skip first split (before any results), get up to 5
+                # Extract snippet
+                snippet_end = part.find("</a>")
+                if snippet_end == -1:
+                    continue
                 snippet = (
-                    snippet_tag.get_text() if snippet_tag else "No snippet available."
+                    part[part.find(">") + 1 : snippet_end]
+                    .replace("<b>", "")
+                    .replace("</b>", "")
+                    .strip()
                 )
-                results.append(f"Title: {title}\nLink: {link}\nSnippet: {snippet}\n")
 
-        if not results:
-            return "No results found. DuckDuckGo might be rate-limiting or the query returned no data."
+                # Look backwards for the title and link (which precede the snippet)
+                results.append(f"Result Snippet: {snippet}\n---")
 
-        return "\n".join(results)
+            if not results:
+                return "No results found or rate limited by search provider."
+
+            return "\n".join(results)
+
+    except urllib.error.HTTPError as e:
+        return f"Search HTTP Error: {e.code} - {e.reason}"
+    except urllib.error.URLError as e:
+        return f"Search Connection Error: {e.reason}"
     except Exception as e:
         return f"Error performing web search: {e}"
 

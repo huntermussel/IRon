@@ -9,6 +9,7 @@ import (
 	"iron/internal/middleware"
 	"iron/internal/skills"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/tmc/langchaingo/llms"
@@ -207,49 +208,62 @@ func (s *Service) SendWithContext(ctx context.Context, input string, mwCtx map[s
 			break
 		}
 
-		// 2. Execute tools
-		for _, tc := range toolCalls {
-			fmt.Printf("🔧 Tool Call: %s(%s)\n", tc.Name, tc.Arguments)
+		// 2. Execute tools concurrently
+		var wg sync.WaitGroup
+		results := make([]Message, len(toolCalls))
 
-			var result string
+		for idx, tc := range toolCalls {
+			wg.Add(1)
+			go func(i int, t ToolCall) {
+				defer wg.Done()
 
-			// Try built-in skills first
-			skill, found := s.skillMgr.Get(tc.Name)
-			if found {
-				var args map[string]any
-				if err := json.Unmarshal([]byte(tc.Arguments), &args); err != nil {
-					result = fmt.Sprintf("Error: Invalid arguments JSON: %s", err)
+				fmt.Printf("🔧 Tool Call: %s(%s)\n", t.Name, t.Arguments)
+				var result string
+
+				// Try built-in skills first
+				skill, found := s.skillMgr.Get(t.Name)
+				if found {
+					var args map[string]any
+					if err := json.Unmarshal([]byte(t.Arguments), &args); err != nil {
+						result = fmt.Sprintf("Error: Invalid arguments JSON: %s", err)
+					} else {
+						result, err = skill.Execute(ctx, args)
+						if err != nil {
+							result = fmt.Sprintf("Error executing tool: %v", err)
+						}
+					}
 				} else {
-					result, err = skill.Execute(ctx, args)
-					if err != nil {
-						result = fmt.Sprintf("Error executing tool: %v", err)
+					// Not in built-in skills? Try Middleware execution!
+					mwResult, mwErr := s.executeMiddlewareTool(ctx, mwCtx, t)
+					if mwErr == nil && mwResult != "" {
+						result = mwResult
+					} else {
+						result = fmt.Sprintf("Error: Tool '%s' not found.", t.Name)
 					}
 				}
-			} else {
-				// Not in built-in skills? Try Middleware execution!
-				mwResult, mwErr := s.executeMiddlewareTool(ctx, mwCtx, tc)
-				if mwErr == nil && mwResult != "" {
-					result = mwResult
-				} else {
-					result = fmt.Sprintf("Error: Tool '%s' not found.", tc.Name)
+
+				// Truncate result for display but keep full for LLM
+				displayResult := result
+				if len(displayResult) > 200 {
+					displayResult = displayResult[:200] + "..."
 				}
-			}
+				fmt.Printf("   Result: %s\n", displayResult)
 
-			// Truncate result for display but keep full for LLM
-			displayResult := result
-			if len(displayResult) > 200 {
-				displayResult = displayResult[:200] + "..."
-			}
-			fmt.Printf("   Result: %s\n", displayResult)
-
-			// Add tool response to current history
-			currentHistory = append(currentHistory, Message{
-				Role:       RoleTool,
-				Content:    result,
-				ToolCallID: tc.ID,
-				ToolName:   tc.Name,
-			})
+				// Store the result safely at its original index
+				results[i] = Message{
+					Role:       RoleTool,
+					Content:    result,
+					ToolCallID: t.ID,
+					ToolName:   t.Name,
+				}
+			}(idx, tc)
 		}
+
+		// Wait for all tools to finish executing
+		wg.Wait()
+
+		// Append the gathered results in the exact order the model requested them
+		currentHistory = append(currentHistory, results...)
 	}
 
 	// Finalize history with original user input (to keep history compact)

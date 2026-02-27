@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	mw "iron/internal/middleware"
@@ -40,13 +42,18 @@ func (AlarmExec) OnEvent(_ context.Context, e *mw.Event) (mw.Decision, error) {
 	outputs := make([]string, 0, len(raw))
 	handled := false
 	for _, tc := range raw {
-		if tc.Tool != "alarm.set" {
-			continue
-		}
-		handled = true
-		out := runAlarmTool(tc)
-		if strings.TrimSpace(out) != "" {
-			outputs = append(outputs, out)
+		if tc.Tool == "alarm.set" {
+			handled = true
+			out := runAlarmTool(tc)
+			if strings.TrimSpace(out) != "" {
+				outputs = append(outputs, out)
+			}
+		} else if tc.Tool == "timer.set" {
+			handled = true
+			out := runTimerTool(tc)
+			if strings.TrimSpace(out) != "" {
+				outputs = append(outputs, out)
+			}
 		}
 	}
 	if !handled {
@@ -93,4 +100,37 @@ func runAlarmTool(tc mw.ToolCall) string {
 		return fmt.Sprintf("ok: alarm set for %s (persisted)", timeStr)
 	}
 	return fmt.Sprintf("ok: alarm set for %s (%s) (persisted)", timeStr, label)
+}
+
+func runTimerTool(tc mw.ToolCall) string {
+	minutes, ok := tc.Args["minutes"].(float64)
+	if !ok || minutes <= 0 {
+		return "timer.set: invalid or missing 'minutes' argument"
+	}
+	message, _ := tc.Args["message"].(string)
+	if message == "" {
+		message = "Timer finished!"
+	}
+
+	seconds := int(minutes * 60)
+	var cmd *exec.Cmd
+
+	if runtime.GOOS == "darwin" {
+		shCmd := fmt.Sprintf(`sleep %d && osascript -e 'display notification "%s" with title "IRon Timer"'`, seconds, message)
+		cmd = exec.Command("sh", "-c", shCmd)
+	} else if runtime.GOOS == "linux" {
+		shCmd := fmt.Sprintf(`sleep %d && notify-send "IRon Timer" "%s"`, seconds, message)
+		cmd = exec.Command("sh", "-c", shCmd)
+	} else {
+		return "timer.set: background timers are currently only supported on Linux and macOS"
+	}
+
+	// Start detaches the process, allowing IRon to exit while the timer runs
+	if err := cmd.Start(); err != nil {
+		return fmt.Sprintf("timer.set failed to start: %v", err)
+	}
+
+	// We intentionally do not call cmd.Wait() so it becomes an orphan/background process
+
+	return fmt.Sprintf("ok: timer set for %.1f minutes with message: '%s'", minutes, message)
 }

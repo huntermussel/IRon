@@ -48,3 +48,27 @@ func AlarmSetTool() llms.Tool {
 		},
 	}
 }
+
+func TimerSetTool() llms.Tool {
+	return llms.Tool{
+		Type: "function",
+		Function: &llms.FunctionDefinition{
+			Name:        "timer.set",
+			Description: "Set a timer or reminder that will notify you after a specified duration.",
+			Parameters: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"minutes": map[string]any{
+						"type":        "number",
+						"description": "Duration in minutes until the timer goes off",
+					},
+					"message": map[string]any{
+						"type":        "string",
+						"description": "The reminder message to display",
+					},
+				},
+				"required": []string{"minutes", "message"},
+			},
+		},
+	}
+}

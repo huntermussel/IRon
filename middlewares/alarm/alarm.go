@@ -222,6 +222,7 @@ func (AlarmMode) OnEvent(_ context.Context, e *mw.Event) (mw.Decision, error) {
 	}
 
 	params.Tools = upsertTool(params.Tools, AlarmSetTool())
+	params.Tools = upsertTool(params.Tools, TimerSetTool())
 
 	intent, conf, _ := getAlarmNLU(e)
 	if intent != "set_alarm" || conf < alarmLow || conf >= alarmHigh {

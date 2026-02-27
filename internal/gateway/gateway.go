@@ -30,7 +30,7 @@ func New(configPath string) *Gateway {
 	return &Gateway{ConfigPath: configPath}
 }
 
-func (g *Gateway) initService(ctx context.Context) (*chat.Service, string, llm.Provider, string, func(), error) {
+func (g *Gateway) InitService(ctx context.Context) (*chat.Service, string, llm.Provider, string, func(), error) {
 	// Load environment variables from .env if present
 	_ = godotenv.Load()
 
@@ -117,12 +117,12 @@ func (g *Gateway) initService(ctx context.Context) (*chat.Service, string, llm.P
 
 	// Skills
 	skillMgr := skills.NewManager()
-	// skillMgr.Register(&skills.ShellSkill{})
-	// // skillMgr.Register(&skills.FileSkill{}) // Redundant with codingtools middleware
-	// skillMgr.Register(&skills.FetchSkill{})
-	// skillMgr.Register(&skills.HelpSkill{})
-	// skillMgr.Register(&skills.MemorySkill{Store: memStore})
-	// skillMgr.Register(&skills.BrowserSkill{Controller: browserCtrl})
+	skillMgr.Register(&skills.ShellSkill{})
+	// skillMgr.Register(&skills.FileSkill{}) // Redundant with codingtools middleware
+	skillMgr.Register(&skills.FetchSkill{})
+	skillMgr.Register(&skills.HelpSkill{})
+	skillMgr.Register(&skills.MemorySkill{Store: memStore})
+	skillMgr.Register(&skills.BrowserSkill{Controller: browserCtrl})
 
 	opts := []chat.ServiceOption{
 		chat.WithMiddlewareChain(chain),
@@ -140,7 +140,7 @@ func (g *Gateway) initService(ctx context.Context) (*chat.Service, string, llm.P
 }
 
 func (g *Gateway) Execute(ctx context.Context, input string) error {
-	service, _, _, _, cleanup, err := g.initService(ctx)
+	service, _, _, _, cleanup, err := g.InitService(ctx)
 	if err != nil {
 		return err
 	}
@@ -163,7 +163,7 @@ func (g *Gateway) Execute(ctx context.Context, input string) error {
 }
 
 func (g *Gateway) Run(ctx context.Context) error {
-	service, model, provider, baseURL, cleanup, err := g.initService(ctx)
+	service, model, provider, baseURL, cleanup, err := g.InitService(ctx)
 	if err != nil {
 		return err
 	}
