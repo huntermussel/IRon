@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	mw "iron/internal/middleware"
@@ -71,13 +72,21 @@ func baseTools() []llms.Tool {
 			},
 			"required": []string{"path"},
 		}),
-		funcTool("find", "Search text", map[string]any{
+		funcTool("find", "Find files containing specific text. Recursively scans the directory. Use for locating keywords across the project.", map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"path":  map[string]any{"type": "string", "description": "root path"},
-				"query": map[string]any{"type": "string", "description": "text to find"},
+				"path":  map[string]any{"type": "string", "description": "Root path to start searching (e.g. '.')"},
+				"query": map[string]any{"type": "string", "description": "Text string to search for within files"},
 			},
 			"required": []string{"path", "query"},
+		}),
+		funcTool("grep", "Search for patterns in a specific file. Use this when you know which file to search.", map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"path":    map[string]any{"type": "string", "description": "Path to the file"},
+				"pattern": map[string]any{"type": "string", "description": "Regex pattern or string to search for"},
+			},
+			"required": []string{"path", "pattern"},
 		}),
 		funcTool("diff", "Diff paths", map[string]any{
 			"type": "object",
@@ -183,6 +192,8 @@ func runTool(tc mw.ToolCall) (string, bool) {
 		return toolWrite(tc.Args), true
 	case "find":
 		return toolFind(tc.Args), true
+	case "grep":
+		return toolGrep(tc.Args), true
 	case "diff":
 		return toolDiff(tc.Args), true
 	default:
@@ -266,6 +277,51 @@ func toolWrite(args map[string]any) string {
 		return "write_file: " + err.Error()
 	}
 	return "ok: wrote " + p
+}
+
+func toolGrep(args map[string]any) string {
+	path, err := cleanPath(args["path"])
+	if err != nil {
+		return "grep: " + err.Error()
+	}
+	pattern, ok := args["pattern"].(string)
+	if !ok || pattern == "" {
+		return "grep: pattern is required"
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "grep: " + err.Error()
+	}
+
+	re, err := regexp.Compile("(?i)" + pattern)
+	if err != nil {
+		// Fallback to literal contains if regex fails
+		lines := strings.Split(string(data), "\n")
+		var matches []string
+		for i, line := range lines {
+			if strings.Contains(strings.ToLower(line), strings.ToLower(pattern)) {
+				matches = append(matches, fmt.Sprintf("%d: %s", i+1, line))
+			}
+		}
+		if len(matches) == 0 {
+			return "grep: no matches"
+		}
+		return strings.Join(matches, "\n")
+	}
+
+	lines := strings.Split(string(data), "\n")
+	var matches []string
+	for i, line := range lines {
+		if re.MatchString(line) {
+			matches = append(matches, fmt.Sprintf("%d: %s", i+1, line))
+		}
+	}
+
+	if len(matches) == 0 {
+		return "grep: no matches"
+	}
+	return strings.Join(matches, "\n")
 }
 
 func toolFind(args map[string]any) string {

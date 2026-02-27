@@ -116,6 +116,7 @@ func (g *Gateway) initService(ctx context.Context) (*chat.Service, string, llm.P
 	skillMgr.Register(&skills.ShellSkill{})
 	// skillMgr.Register(&skills.FileSkill{}) // Redundant with codingtools middleware
 	skillMgr.Register(&skills.FetchSkill{})
+	skillMgr.Register(&skills.HelpSkill{})
 	skillMgr.Register(&skills.MemorySkill{Store: memStore})
 	skillMgr.Register(&skills.BrowserSkill{Controller: browserCtrl})
 

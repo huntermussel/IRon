@@ -17,7 +17,7 @@ type ShellSkill struct{}
 
 func (s *ShellSkill) Name() string { return "shell" }
 func (s *ShellSkill) Description() string {
-	return "Executes a shell command. Use this to run system commands, list files, etc."
+	return "Executes a shell command. Use this for general unix utilities (e.g. 'which', 'cat', 'ps', 'grep') when a specialized tool is not available."
 }
 func (s *ShellSkill) Parameters() map[string]any {
 	return map[string]any{
@@ -25,7 +25,7 @@ func (s *ShellSkill) Parameters() map[string]any {
 		"properties": map[string]any{
 			"command": map[string]any{
 				"type":        "string",
-				"description": "The shell command to execute.",
+				"description": "The shell command to execute (e.g. 'pwd', 'ls -R', 'which <tool>').",
 			},
 			"timeout": map[string]any{
 				"type":        "integer",
@@ -188,6 +188,26 @@ func (f *FetchSkill) Execute(ctx context.Context, args map[string]any) (string, 
 		text = text[:4000] + "\n...(truncated)"
 	}
 	return fmt.Sprintf("HTTP %d\n\n%s", resp.StatusCode, text), nil
+}
+
+// HelpSkill provides guidance on using IRon tools.
+type HelpSkill struct{}
+
+func (h *HelpSkill) Name() string { return "help" }
+func (h *HelpSkill) Description() string {
+	return "Provides information about using IRon tools and system capabilities."
+}
+func (h *HelpSkill) Parameters() map[string]any {
+	return map[string]any{
+		"type":       "object",
+		"properties": map[string]any{},
+	}
+}
+func (h *HelpSkill) Execute(ctx context.Context, args map[string]any) (string, error) {
+	return "IRon Tool System Guide:\n" +
+		"- Specialized tools: ls, read_file, write_file, find, grep, web_search, etc.\n" +
+		"- Python bridge: tools starting with 'py_' are dynamic scripts.\n" +
+		"- General utility: use the 'shell' tool for any unix command (which, cat, ps, etc.) not listed above.", nil
 }
 
 func stripHTML(s string) string {
