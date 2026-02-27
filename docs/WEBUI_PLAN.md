@@ -76,6 +76,11 @@ This phase focuses on observability, long-running tasks, and autonomous agent ca
 - [ ] **Backend:** Add a feature to pause execution and request user permission before running dangerous commands (e.g., `rm -rf`, modifying system configs).
 - [ ] **Frontend:** Display interactive prompt dialogs inside the chat for "Approve" or "Deny" actions.
 
+### 5. Generative UI (Interactive Widgets)
+- [ ] **Backend:** Expose structured JSON data for tool calls/results instead of plain text where applicable.
+- [ ] **Frontend:** Intercept structured tool data and render rich React components (e.g., `<WeatherWidget data={...} />`, `<TimerCard>`).
+- [ ] **Frontend:** Make widgets fully interactive within the chat stream (e.g., a button to cancel an active timer, or interactive charts for data analysis).
+
 ---
 
 ## Implementation Steps (Next Actions)
