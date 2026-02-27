@@ -55,6 +55,11 @@ export default function App() {
   ]);
   const [chatInput, setChatInput] = useState("");
   const [isWaiting, setIsWaiting] = useState(false);
+  const [sessionId] = useState(
+    () => "sess-" + Math.random().toString(36).substring(2, 9),
+  );
+  const [streamingText, setStreamingText] = useState("");
+  const [streamingStatus, setStreamingStatus] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // Settings State
@@ -68,6 +73,24 @@ export default function App() {
     const interval = setInterval(fetchStatus, 30000);
     return () => clearInterval(interval);
   }, []);
+
+  useEffect(() => {
+    const es = new EventSource(`/api/events?session_id=${sessionId}`);
+    es.onmessage = (e) => {
+      try {
+        const data = JSON.parse(e.data);
+        const text = data.text;
+        if (text.startsWith("[STATUS] ")) {
+          setStreamingStatus(text.substring(9));
+        } else {
+          setStreamingText((prev) => prev + text);
+        }
+      } catch (err) {
+        console.error("SSE Parse Error", err);
+      }
+    };
+    return () => es.close();
+  }, [sessionId]);
 
   useEffect(() => {
     scrollToBottom();
@@ -139,12 +162,14 @@ export default function App() {
     setMessages((prev) => [...prev, { role: "user", content: userText }]);
     setChatInput("");
     setIsWaiting(true);
+    setStreamingText("");
+    setStreamingStatus("");
 
     try {
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: userText }),
+        body: JSON.stringify({ session_id: sessionId, message: userText }),
       });
       if (res.ok) {
         const data = await res.json();
@@ -303,16 +328,27 @@ export default function App() {
             <div className="w-8 h-8 rounded-full bg-gray-700 flex items-center justify-center mr-3 flex-shrink-0 mt-1">
               <Bot className="w-4 h-4 text-gray-400" />
             </div>
-            <div className="bg-gray-800 rounded-2xl rounded-tl-none px-5 py-4 max-w-[85%] border border-gray-700 flex items-center space-x-2">
-              <div className="w-2 h-2 bg-gray-500 rounded-full animate-bounce"></div>
-              <div
-                className="w-2 h-2 bg-gray-500 rounded-full animate-bounce"
-                style={{ animationDelay: "0.2s" }}
-              ></div>
-              <div
-                className="w-2 h-2 bg-gray-500 rounded-full animate-bounce"
-                style={{ animationDelay: "0.4s" }}
-              ></div>
+            <div className="bg-gray-800 rounded-2xl rounded-tl-none px-5 py-3 max-w-[85%] border border-gray-700 markdown-body flex flex-col space-y-2">
+              {streamingStatus && (
+                <div className="text-xs text-blue-400 font-mono bg-gray-900 p-2 rounded break-all">
+                  {streamingStatus}
+                </div>
+              )}
+              {streamingText ? (
+                <div dangerouslySetInnerHTML={renderMarkdown(streamingText)} />
+              ) : (
+                <div className="flex items-center space-x-2 py-2">
+                  <div className="w-2 h-2 bg-gray-500 rounded-full animate-bounce"></div>
+                  <div
+                    className="w-2 h-2 bg-gray-500 rounded-full animate-bounce"
+                    style={{ animationDelay: "0.2s" }}
+                  ></div>
+                  <div
+                    className="w-2 h-2 bg-gray-500 rounded-full animate-bounce"
+                    style={{ animationDelay: "0.4s" }}
+                  ></div>
+                </div>
+              )}
             </div>
           </div>
         )}

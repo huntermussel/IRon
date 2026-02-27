@@ -15,19 +15,26 @@ import (
 
 	"iron/internal/chat"
 	"iron/internal/gateway"
+	"iron/internal/middleware"
 	"iron/internal/onboarding"
 )
 
 //go:embed static
 var staticFiles embed.FS
 
+// Session holds the state for a single Web UI chat session
+type Session struct {
+	service *chat.Service
+	cleanup func()
+	eventCh chan string
+}
+
 // Server represents the Web UI backend server
 type Server struct {
-	gw      *gateway.Gateway
-	service *chat.Service
-	mu      sync.Mutex
-	port    int
-	cleanup func()
+	gw       *gateway.Gateway
+	sessions map[string]*Session
+	mu       sync.Mutex
+	port     int
 }
 
 // NewServer creates a new Web UI server instance
@@ -36,31 +43,60 @@ func NewServer(gw *gateway.Gateway, port int) *Server {
 		port = 8080
 	}
 	return &Server{
-		gw:   gw,
-		port: port,
+		gw:       gw,
+		port:     port,
+		sessions: make(map[string]*Session),
 	}
+}
+
+func (s *Server) getSession(ctx context.Context, id string) (*Session, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if sess, ok := s.sessions[id]; ok {
+		return sess, nil
+	}
+
+	eventCh := make(chan string, 200)
+
+	streamCb := func(msg string) {
+		select {
+		case eventCh <- msg:
+		default:
+		}
+	}
+
+	statusCb := func(msg string) {
+		select {
+		case eventCh <- "[STATUS] " + msg:
+		default:
+		}
+	}
+
+	service, _, _, _, cleanup, err := s.gw.InitService(ctx, chat.WithStreamCallback(streamCb), chat.WithStatusCallback(statusCb))
+	if err != nil {
+		return nil, err
+	}
+
+	sess := &Session{
+		service: service,
+		cleanup: cleanup,
+		eventCh: eventCh,
+	}
+	s.sessions[id] = sess
+	return sess, nil
 }
 
 // Start initializes the service and starts the HTTP server
 func (s *Server) Start(ctx context.Context) error {
-	// Initialize the chat service for the Web UI
-	// Using a no-op stream callback so it doesn't spam stdout
-	streamCb := func(msg string) {}
-
-	service, _, _, _, cleanup, err := s.gw.InitService(ctx, chat.WithStreamCallback(streamCb))
-	if err != nil {
-		return fmt.Errorf("failed to init service for webui: %w", err)
-	}
-	s.service = service
-	s.cleanup = cleanup
-	defer s.cleanup()
-
 	mux := http.NewServeMux()
 
 	// API Routes
 	mux.HandleFunc("/api/chat", s.handleChat)
 	mux.HandleFunc("/api/settings", s.handleSettings)
 	mux.HandleFunc("/api/status", s.handleStatus)
+	mux.HandleFunc("/api/events", s.handleEvents)
+	mux.HandleFunc("/api/plugins", s.handlePlugins)
 
 	// Serve static files
 	staticFS, err := fs.Sub(staticFiles, "static")
@@ -80,6 +116,12 @@ func (s *Server) Start(ctx context.Context) error {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		srv.Shutdown(shutdownCtx)
+
+		s.mu.Lock()
+		for _, sess := range s.sessions {
+			sess.cleanup()
+		}
+		s.mu.Unlock()
 	}()
 
 	log.Printf("[WebUI] 🌐 Starting Web UI on http://localhost:%d", s.port)
@@ -91,7 +133,8 @@ func (s *Server) Start(ctx context.Context) error {
 }
 
 type ChatRequest struct {
-	Message string `json:"message"`
+	SessionID string `json:"session_id"`
+	Message   string `json:"message"`
 }
 
 type ChatResponse struct {
@@ -111,14 +154,21 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Ensure thread-safe access to the single chat session for now
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	sessionID := req.SessionID
+	if sessionID == "" {
+		sessionID = "default"
+	}
+
+	sess, err := s.getSession(r.Context(), sessionID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 
 	turnCtx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
 	defer cancel()
 
-	reply, err := s.service.Send(turnCtx, req.Message)
+	reply, err := sess.service.Send(turnCtx, req.Message)
 
 	resp := ChatResponse{Reply: reply}
 	if err != nil {
@@ -127,6 +177,41 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
+}
+
+func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
+	sessionID := r.URL.Query().Get("session_id")
+	if sessionID == "" {
+		sessionID = "default"
+	}
+
+	sess, err := s.getSession(r.Context(), sessionID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
+		return
+	}
+
+	ctx := r.Context()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case msg := <-sess.eventCh:
+			payload, _ := json.Marshal(map[string]string{"text": msg})
+			fmt.Fprintf(w, "data: %s\n\n", payload)
+			flusher.Flush()
+		}
+	}
 }
 
 func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
@@ -191,4 +276,26 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(status)
+}
+
+func (s *Server) handlePlugins(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	registered := middleware.Registered()
+	plugins := make([]map[string]interface{}, 0, len(registered))
+
+	for _, mw := range registered {
+		plugins = append(plugins, map[string]interface{}{
+			"id":       mw.ID(),
+			"priority": mw.Priority(),
+		})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"plugins": plugins,
+	})
 }
