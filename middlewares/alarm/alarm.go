@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -143,7 +145,7 @@ func alarmHeuristic(input string) (intent string, confidence int, slots map[stri
 type AlarmDeterministic struct{}
 
 func (AlarmDeterministic) ID() string    { return "alarm_deterministic" }
-func (AlarmDeterministic) Priority() int { return 95 }
+func (AlarmDeterministic) Priority() int { return 110 }
 
 func (AlarmDeterministic) ShouldLoad(_ context.Context, e *mw.Event) bool {
 	return e != nil && e.Name == mw.EventBeforeLLMRequest
@@ -164,11 +166,26 @@ func (AlarmDeterministic) OnEvent(_ context.Context, e *mw.Event) (mw.Decision, 
 		timeStr = slots["time"]
 	}
 
+	// Persist to ~/.iron/alarms.json
+	home, _ := os.UserHomeDir()
+	alarmPath := filepath.Join(home, ".iron", "alarms.json")
+	os.MkdirAll(filepath.Dir(alarmPath), 0755)
+
+	var alarms []StoredAlarm
+	data, err := os.ReadFile(alarmPath)
+	if err == nil {
+		json.Unmarshal(data, &alarms)
+	}
+
+	alarms = append(alarms, StoredAlarm{Time: timeStr})
+	newData, _ := json.MarshalIndent(alarms, "", "  ")
+	os.WriteFile(alarmPath, newData, 0644)
+
 	resp := map[string]any{
 		"action":  "set_alarm",
 		"time":    timeStr,
 		"status":  "success",
-		"message": fmt.Sprintf("Alarm set for %s.", timeStr),
+		"message": fmt.Sprintf("Alarm set for %s (persisted).", timeStr),
 	}
 	b, err := json.Marshal(resp)
 	if err != nil {
@@ -188,7 +205,7 @@ func (AlarmDeterministic) OnEvent(_ context.Context, e *mw.Event) (mw.Decision, 
 type AlarmMode struct{}
 
 func (AlarmMode) ID() string    { return "alarm_mode" }
-func (AlarmMode) Priority() int { return 90 }
+func (AlarmMode) Priority() int { return 110 }
 
 func (AlarmMode) ShouldLoad(_ context.Context, e *mw.Event) bool {
 	return e != nil && e.Name == mw.EventBeforeLLMRequest

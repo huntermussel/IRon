@@ -30,7 +30,7 @@ func New(configPath string) *Gateway {
 	return &Gateway{ConfigPath: configPath}
 }
 
-func (g *Gateway) Run(ctx context.Context) error {
+func (g *Gateway) initService(ctx context.Context) (*chat.Service, string, llm.Provider, string, func(), error) {
 	// Load environment variables from .env if present
 	_ = godotenv.Load()
 
@@ -86,7 +86,7 @@ func (g *Gateway) Run(ctx context.Context) error {
 	// 1. Initialize Components
 	adapter, err := llm.NewAdapter(provider, model, baseURL)
 	if err != nil {
-		return fmt.Errorf("failed to initialize adapter: %w", err)
+		return nil, "", "", "", nil, fmt.Errorf("failed to initialize adapter: %w", err)
 	}
 
 	// Middleware logging
@@ -110,7 +110,6 @@ func (g *Gateway) Run(ctx context.Context) error {
 	if err := browserCtrl.Start(ctx); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: failed to start browser: %v\n", err)
 	}
-	defer browserCtrl.Stop()
 
 	// Skills
 	skillMgr := skills.NewManager()
@@ -127,6 +126,38 @@ func (g *Gateway) Run(ctx context.Context) error {
 	}
 
 	service := chat.NewService(adapter, opts...)
+
+	cleanup := func() {
+		browserCtrl.Stop()
+	}
+
+	return service, model, provider, baseURL, cleanup, nil
+}
+
+func (g *Gateway) Execute(ctx context.Context, input string) error {
+	service, _, _, _, cleanup, err := g.initService(ctx)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+
+	turnCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	defer cancel()
+
+	_, err = service.Send(turnCtx, input)
+	if err != nil {
+		return err
+	}
+	fmt.Println()
+	return nil
+}
+
+func (g *Gateway) Run(ctx context.Context) error {
+	service, model, provider, baseURL, cleanup, err := g.initService(ctx)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
 
 	// 2. Interactive Loop
 	fmt.Println("IRon chat")

@@ -45,7 +45,7 @@ func (m *CronMiddleware) ID() string {
 }
 
 func (m *CronMiddleware) Priority() int {
-	return 100
+	return 110
 }
 
 // ShouldLoad checks if the input matches the cron intent using the shared NLU engine.

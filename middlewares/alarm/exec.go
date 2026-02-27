@@ -2,7 +2,10 @@ package alarm
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
 	mw "iron/internal/middleware"
@@ -56,6 +59,11 @@ func (AlarmExec) OnEvent(_ context.Context, e *mw.Event) (mw.Decision, error) {
 	}, nil
 }
 
+type StoredAlarm struct {
+	Time  string `json:"time"`
+	Label string `json:"label,omitempty"`
+}
+
 func runAlarmTool(tc mw.ToolCall) string {
 	timeStr, _ := tc.Args["time"].(string)
 	label, _ := tc.Args["label"].(string)
@@ -64,8 +72,23 @@ func runAlarmTool(tc mw.ToolCall) string {
 		return `alarm.set: missing required arg "time"`
 	}
 
-	if strings.TrimSpace(label) == "" {
-		return fmt.Sprintf("ok: alarm set for %s", timeStr)
+	// Persist to ~/.iron/alarms.json
+	home, _ := os.UserHomeDir()
+	alarmPath := filepath.Join(home, ".iron", "alarms.json")
+	os.MkdirAll(filepath.Dir(alarmPath), 0755)
+
+	var alarms []StoredAlarm
+	data, err := os.ReadFile(alarmPath)
+	if err == nil {
+		json.Unmarshal(data, &alarms)
 	}
-	return fmt.Sprintf("ok: alarm set for %s (%s)", timeStr, label)
+
+	alarms = append(alarms, StoredAlarm{Time: timeStr, Label: label})
+	newData, _ := json.MarshalIndent(alarms, "", "  ")
+	os.WriteFile(alarmPath, newData, 0644)
+
+	if strings.TrimSpace(label) == "" {
+		return fmt.Sprintf("ok: alarm set for %s (persisted)", timeStr)
+	}
+	return fmt.Sprintf("ok: alarm set for %s (%s) (persisted)", timeStr, label)
 }

@@ -38,6 +38,7 @@ Version: ` + version,
 
 	rootCmd.AddCommand(
 		chatCmd(),
+		execCmd(),
 		onboardCmd(),
 		versionCmd(),
 		doctorCmd(),
@@ -71,6 +72,28 @@ func chatCmd() *cobra.Command {
 			}()
 
 			return gw.Run(ctx)
+		},
+	}
+}
+
+func execCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "exec [prompt]",
+		Short: "Execute a single prompt and exit",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			gw := gateway.New(cfgFile)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+
+			sigCh := make(chan os.Signal, 1)
+			signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+			go func() {
+				<-sigCh
+				cancel()
+			}()
+
+			return gw.Execute(ctx, args[0])
 		},
 	}
 }

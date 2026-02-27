@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 
 	"iron/internal/middleware"
 	"iron/internal/nlu"
@@ -42,7 +44,7 @@ func (m *DeviceMiddleware) ID() string {
 }
 
 func (m *DeviceMiddleware) Priority() int {
-	return 100
+	return 110
 }
 
 // ShouldLoad checks if the input matches the device intent using the shared NLU engine.
@@ -68,12 +70,28 @@ func (m *DeviceMiddleware) OnEvent(ctx context.Context, e *middleware.Event) (mi
 		state = s
 	}
 
+	// Virtual House Persistence: updates a local JSON file to track device states
+	home, _ := os.UserHomeDir()
+	housePath := filepath.Join(home, ".iron", "virtual_house.json")
+	os.MkdirAll(filepath.Dir(housePath), 0755)
+
+	houseState := make(map[string]string)
+	data, err := os.ReadFile(housePath)
+	if err == nil {
+		json.Unmarshal(data, &houseState)
+	}
+
+	houseState[device] = state
+	newData, _ := json.MarshalIndent(houseState, "", "  ")
+	os.WriteFile(housePath, newData, 0644)
+
 	respData := map[string]any{
 		"action":  "control_device",
 		"device":  device,
 		"state":   state,
 		"status":  "success",
-		"message": fmt.Sprintf("Turned %s the %s.", state, device),
+		"message": fmt.Sprintf("Turned %s the %s (state saved in Virtual House).", state, device),
+		"house":   houseState,
 	}
 
 	jsonBytes, err := json.Marshal(respData)

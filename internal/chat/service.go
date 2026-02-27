@@ -239,6 +239,7 @@ func (s *Service) SendWithContext(ctx context.Context, input string, mwCtx map[s
 		}
 		results, err := s.mws.Dispatch(ctx, e)
 		if err == nil {
+
 			updated, canceled := applyTextDecisions(finalResponse, results)
 			if canceled != nil && canceled.Cancel {
 				// If middleware cancels here, it usually means it replaced the response

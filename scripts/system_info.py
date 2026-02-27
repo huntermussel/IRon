@@ -18,8 +18,24 @@ def get_stats():
         total, used, free = shutil.disk_usage("/")
         used_pct = (used / total) * 100
 
-        # Memory (Linux/macOS specific fallback for basic stats if psutil is missing)
-        # For simplicity and zero-dependency, we stick to what shutil and os provide
+        # Memory stats (Linux fallback)
+        mem_info = "Memory Info: Only detailed on Linux"
+        if platform.system() == "Linux":
+            try:
+                with open("/proc/meminfo", "r") as f:
+                    lines = f.readlines()
+                mem = {}
+                for line in lines:
+                    parts = line.split(":")
+                    if len(parts) == 2:
+                        mem[parts[0].strip()] = int(parts[1].split()[0].strip())
+
+                total_mem = mem.get("MemTotal", 0) / 1024  # MB
+                avail_mem = mem.get("MemAvailable", mem.get("MemFree", 0)) / 1024  # MB
+                used_mem = total_mem - avail_mem
+                mem_info = f"{used_mem / 1024:.1f} GB used / {total_mem / 1024:.1f} GB total ({avail_mem / 1024:.1f} GB available)"
+            except Exception:
+                pass
 
         stats = [
             "=== System Health Report ===",
@@ -33,6 +49,9 @@ def get_stats():
             f"Total: {total // (2**30)} GB",
             f"Used:  {used // (2**30)} GB ({used_pct:.1f}%)",
             f"Free:  {free // (2**30)} GB",
+            "",
+            "--- Memory ---",
+            mem_info,
             "",
             "--- Performance ---",
         ]
