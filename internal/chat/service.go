@@ -161,9 +161,21 @@ func (s *Service) SendWithContext(ctx context.Context, input string, mwCtx map[s
 
 	for i := 0; i < maxIterations; i++ {
 		messages := make([]Message, 0, len(currentHistory)+1)
+		sysPrompt := fmt.Sprintf("You are IRon, a terminal AI. You have access to tools. If a tool exists to answer the request, YOU MUST CALL THE TOOL. DO NOT generate text instead of calling tools. Time: %s", time.Now().Format(time.RFC1123))
+
+		if llmParams != nil && len(llmParams.Tools) > 0 {
+			var toolNames []string
+			for _, t := range llmParams.Tools {
+				if t.Function != nil {
+					toolNames = append(toolNames, t.Function.Name)
+				}
+			}
+			sysPrompt += "\n\nAvailable tools: " + strings.Join(toolNames, ", ") + ". ONLY use these tools."
+		}
+
 		messages = append(messages, Message{
 			Role:    RoleSystem,
-			Content: fmt.Sprintf("You are IRon, a terminal AI. Use tools. No disclaimers. Use relative paths. NEVER guess file locations; explore first with 'ls' or 'pwd'. Time: %s", time.Now().Format(time.RFC1123)),
+			Content: sysPrompt,
 		})
 		messages = append(messages, currentHistory...)
 
