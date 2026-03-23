@@ -4,6 +4,7 @@ package autoload
 import (
 	_ "iron/middlewares/alarm"
 	_ "iron/middlewares/calendar"
+	_ "iron/middlewares/distiller"
 	_ "iron/middlewares/codingtools"
 	_ "iron/middlewares/cron"
 	_ "iron/middlewares/device"
