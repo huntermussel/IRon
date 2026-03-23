@@ -1,13 +1,16 @@
 // Package distiller implements a token-saving middleware that compresses
 // conversation context using four complementary strategies:
 //
-//  1. IR (Information Retrieval): lexical retrieval of relevant past snippets
-//  2. DSL: compact key-point notation instead of raw message history
+//  1. IR (Information Retrieval): rule-based key-point extraction from messages
+//  2. DSL: compact key-point notation injected instead of raw message history
 //  3. Procedural: cached step-sequences for recognized task patterns
-//  4. Semantic cache: skip LLM entirely for near-identical queries
+//  4. Semantic cache: skip LLM entirely for near-identical repeat queries
 //
 // Combined, these reduce input+output tokens by 40–80% for long sessions
 // without degrading response quality.
+//
+// Context survives restarts via ~/.iron/keypoints.json and
+// ~/.iron/procedures.json (written atomically, debounced at 500ms).
 //
 // Priority: 105 — runs before IntentCompressor (90) and TokenBudget (80),
 // after Greeting (110) so greetings are still short-circuited first.
@@ -16,6 +19,8 @@ package distiller
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -24,27 +29,51 @@ import (
 )
 
 func init() {
-	mw.Register(New())
+	mw.Register(newRegistered())
 }
 
-// Distiller is the token-efficiency middleware. One instance is shared across
-// all requests (registered as a singleton via init). Stores are session-keyed
+// newRegistered is called by init(). It tries to use ~/.iron/ for persistence
+// and falls back to pure in-memory if the home directory is unavailable.
+func newRegistered() *Distiller {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return newInMemory()
+	}
+	dir := filepath.Join(home, ".iron")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return newInMemory()
+	}
+	return newPersistent(dir)
+}
+
+// Distiller is the token-efficiency middleware.
+// One instance is registered globally via init(). Stores are session-keyed
 // so concurrent sessions are isolated.
 type Distiller struct {
-	kps   *memory.KeyPointStore
+	kps   memory.KeyPointStorer
 	cache *memory.ResponseCache
-	procs *memory.ProcStore
+	procs memory.ProcStorer
 }
 
-// New creates a Distiller with production-grade defaults:
-//   - Semantic cache threshold: 0.82 Jaccard (very conservative to avoid false hits)
-//   - Cache capacity: 512 entries
-//   - Cache TTL: 12 hours (long enough to persist within a working day)
+// New returns an in-memory-only Distiller — useful in tests and sandboxed
+// environments where disk I/O is undesirable.
 func New() *Distiller {
+	return newInMemory()
+}
+
+func newInMemory() *Distiller {
 	return &Distiller{
 		kps:   memory.NewKeyPointStore(),
 		cache: memory.NewResponseCache(0.82, 512, 12*time.Hour),
 		procs: memory.NewProcStore(),
+	}
+}
+
+func newPersistent(dir string) *Distiller {
+	return &Distiller{
+		kps:   memory.NewPersistentKeyPointStore(filepath.Join(dir, "keypoints.json")),
+		cache: memory.NewResponseCache(0.82, 512, 12*time.Hour),
+		procs: memory.NewPersistentProcStore(filepath.Join(dir, "procedures.json")),
 	}
 }
 
@@ -98,23 +127,21 @@ func (d *Distiller) beforeRequest(e *mw.Event) (mw.Decision, error) {
 
 	// ── Pillar 3: Procedural process hint ─────────────────────────────────────
 	// Recognize standard task patterns and inject compact procedure steps.
-	// The LLM can then confirm/adapt the procedure rather than rediscovering it.
+	// The LLM confirms/adapts rather than rediscovering the workflow.
 	var procHint string
 	if proc := d.procs.Match(query); proc != nil {
 		procHint = fmt.Sprintf("[PROC:%s: %s]", proc.Name, proc.FormatDSL())
 	}
 
 	// ── Pillar 2: DSL context injection ───────────────────────────────────────
-	// Encode all accumulated key points (facts, prefs, tasks) as a single
-	// compact line prepended to the user message. This replaces raw history.
+	// Encode all accumulated key points as a single compact line prepended to
+	// the user message. This replaces multi-turn raw history.
 	dsl := d.kps.FormatDSL(session)
 
-	// If neither DSL nor proc hint exist, nothing to inject.
 	if dsl == "" && procHint == "" {
 		return mw.Decision{}, nil
 	}
 
-	// Build the enriched query: compact context header + original query.
 	var header strings.Builder
 	if dsl != "" {
 		header.WriteString("[CTX:" + dsl + "]")
@@ -145,16 +172,15 @@ func (d *Distiller) afterResponse(e *mw.Event) (mw.Decision, error) {
 	}
 
 	// ── Pillar 1: IR key-point extraction ─────────────────────────────────────
-	// Parse the user message for extractable facts, preferences, and task state.
-	// Stored as compact key points — replaces the need to keep raw history.
+	// Parse the user message for facts, preferences, and task status.
+	// Each extracted KeyPoint replaces raw history for that topic permanently.
 	kps := memory.Extract(session, query)
 	for _, kp := range kps {
-		d.kps.Upsert(kp)
+		d.kps.Upsert(kp) // triggers async disk write if persistent
 	}
 
 	// ── Pillar 4: Populate semantic cache ─────────────────────────────────────
-	// Cache substantive responses for future similar queries.
-	// Skip very short responses (likely errors or one-word answers).
+	// Only cache substantive query+response pairs.
 	if resp != "" && len(strings.Fields(query)) >= 3 && len(strings.Fields(resp)) >= 8 {
 		d.cache.Set(query, resp)
 	}
@@ -164,22 +190,21 @@ func (d *Distiller) afterResponse(e *mw.Event) (mw.Decision, error) {
 
 // ─── Stats ────────────────────────────────────────────────────────────────────
 
-// Stats returns a human-readable summary of the distiller's current state.
-// Useful for the `doctor` command and the web UI dashboard.
+// Stats returns a human-readable summary for the `doctor` command or web UI.
 func (d *Distiller) Stats(session string) string {
 	kps := d.kps.All(session)
 	procs := d.procs.All()
-	cacheLen := d.cache.Len()
 	dsl := d.kps.FormatDSL(session)
 
 	return fmt.Sprintf(
 		"distiller: %d key points | %d procedures | %d cache entries\nDSL: %s",
-		len(kps), len(procs), cacheLen, dsl,
+		len(kps), len(procs), d.cache.Len(), dsl,
 	)
 }
 
 // RegisterProcedure adds a custom procedure at runtime.
-// Callers can use this to teach IRon project-specific build/deploy workflows.
+// If the distiller is running in persistent mode, the procedure is saved to
+// ~/.iron/procedures.json and reloaded on next startup.
 func (d *Distiller) RegisterProcedure(p memory.Procedure) {
 	d.procs.Register(p)
 }

@@ -199,6 +199,15 @@ func Extract(session, text string) []KeyPoint {
 	return out
 }
 
+// KeyPointStorer is the interface implemented by both KeyPointStore (in-memory)
+// and PersistentKeyPointStore (disk-backed). The distiller depends on this
+// interface so it works identically in tests and production.
+type KeyPointStorer interface {
+	Upsert(kp KeyPoint)
+	All(session string) []KeyPoint
+	FormatDSL(session string) string
+}
+
 func sanitizeKey(s string) string {
 	s = strings.ToLower(strings.TrimSpace(s))
 	s = strings.ReplaceAll(s, " ", "_")

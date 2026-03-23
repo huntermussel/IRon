@@ -96,6 +96,14 @@ func (s *ProcStore) All() []Procedure {
 	return out
 }
 
+// ProcStorer is the interface implemented by both ProcStore (in-memory) and
+// PersistentProcStore (disk-backed).
+type ProcStorer interface {
+	Match(query string) *Procedure
+	Register(p Procedure)
+	All() []Procedure
+}
+
 func matchesAll(query string, pattern []string) bool {
 	for _, word := range pattern {
 		if !strings.Contains(query, strings.ToLower(word)) {
