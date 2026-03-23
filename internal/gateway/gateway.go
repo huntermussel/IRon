@@ -205,8 +205,28 @@ func (g *Gateway) StartHeartbeat(ctx context.Context) {
 	}()
 }
 
+// historyOpt returns a WithHistoryStore option for the given sessionID using
+// ~/.iron/history/ as the backing directory.
+// Returns nil when the home directory is unavailable — the caller must skip nil opts.
+func historyOpt(sessionID string) chat.ServiceOption {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil
+	}
+	dir := filepath.Join(home, ".iron", "history")
+	store, err := chat.NewFileHistoryStore(dir)
+	if err != nil {
+		return nil
+	}
+	return chat.WithHistoryStore(store, sessionID)
+}
+
 func (g *Gateway) Execute(ctx context.Context, input string) error {
-	service, _, _, _, cleanup, err := g.InitService(ctx)
+	var extraOpts []chat.ServiceOption
+	if opt := historyOpt("cli"); opt != nil {
+		extraOpts = append(extraOpts, opt)
+	}
+	service, _, _, _, cleanup, err := g.InitService(ctx, extraOpts...)
 	if err != nil {
 		return err
 	}
@@ -227,7 +247,11 @@ func (g *Gateway) Execute(ctx context.Context, input string) error {
 }
 
 func (g *Gateway) Run(ctx context.Context) error {
-	service, model, provider, baseURL, cleanup, err := g.InitService(ctx)
+	var extraOpts []chat.ServiceOption
+	if opt := historyOpt("cli"); opt != nil {
+		extraOpts = append(extraOpts, opt)
+	}
+	service, model, provider, baseURL, cleanup, err := g.InitService(ctx, extraOpts...)
 	if err != nil {
 		return err
 	}
