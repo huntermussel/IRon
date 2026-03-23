@@ -34,6 +34,7 @@ type Session struct {
 type Server struct {
 	gw       *gateway.Gateway
 	sessions map[string]*Session
+	history  *chat.FileHistoryStore
 	mu       sync.Mutex
 	port     int
 }
@@ -43,10 +44,16 @@ func NewServer(gw *gateway.Gateway, port int) *Server {
 	if port == 0 {
 		port = 8080
 	}
+	var hs *chat.FileHistoryStore
+	if home, err := os.UserHomeDir(); err == nil {
+		dir := filepath.Join(home, ".iron", "history")
+		hs, _ = chat.NewFileHistoryStore(dir) // nil on error — degrades gracefully
+	}
 	return &Server{
 		gw:       gw,
 		port:     port,
 		sessions: make(map[string]*Session),
+		history:  hs,
 	}
 }
 
@@ -74,7 +81,14 @@ func (s *Server) getSession(ctx context.Context, id string) (*Session, error) {
 		}
 	}
 
-	service, _, _, _, cleanup, err := s.gw.InitService(ctx, chat.WithStreamCallback(streamCb), chat.WithStatusCallback(statusCb))
+	opts := []chat.ServiceOption{
+		chat.WithStreamCallback(streamCb),
+		chat.WithStatusCallback(statusCb),
+	}
+	if s.history != nil {
+		opts = append(opts, chat.WithHistoryStore(s.history, id))
+	}
+	service, _, _, _, cleanup, err := s.gw.InitService(ctx, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -98,6 +112,7 @@ func (s *Server) Start(ctx context.Context) error {
 	mux.HandleFunc("/api/status", s.handleStatus)
 	mux.HandleFunc("/api/events", s.handleEvents)
 	mux.HandleFunc("/api/plugins", s.handlePlugins)
+	mux.HandleFunc("/api/history", s.handleHistory)
 
 	// Serve static files (handling SPA routing)
 	staticFS, err := fs.Sub(staticFiles, "static")
@@ -292,6 +307,48 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(status)
+}
+
+// handleHistory serves GET /api/history?session_id=X  — returns stored messages.
+// Also handles DELETE /api/history?session_id=X to clear a session's history.
+func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
+	if s.history == nil {
+		http.Error(w, "history not available", http.StatusServiceUnavailable)
+		return
+	}
+
+	sessionID := r.URL.Query().Get("session_id")
+	if sessionID == "" {
+		sessionID = "default"
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		msgs, err := s.history.Load(sessionID)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if msgs == nil {
+			msgs = []chat.Message{} // return [] not null
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"session_id": sessionID,
+			"messages":   msgs,
+		})
+
+	case http.MethodDelete:
+		if err := s.history.Delete(sessionID); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"status":"deleted"}`))
+
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
 }
 
 func (s *Server) handlePlugins(w http.ResponseWriter, r *http.Request) {

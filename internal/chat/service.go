@@ -16,14 +16,16 @@ import (
 )
 
 type Service struct {
-	adapter  Adapter
-	history  []Message
-	mws      *middleware.Chain
-	mem      *memory.Store
-	skillMgr *skills.Manager
-	statusCb func(string)
-	streamCb func(string)
-	mu       sync.Mutex
+	adapter      Adapter
+	history      []Message
+	mws          *middleware.Chain
+	mem          *memory.Store
+	skillMgr     *skills.Manager
+	statusCb     func(string)
+	streamCb     func(string)
+	historyStore HistoryStore
+	sessionID    string
+	mu           sync.Mutex
 }
 
 type ServiceOption func(*Service)
@@ -58,6 +60,17 @@ func WithSkills(mgr *skills.Manager) ServiceOption {
 	}
 }
 
+// WithHistoryStore attaches a persistent history store to the service.
+// On construction, the last 20 stored messages are loaded into the LLM context
+// window (matching the existing 20-message prune limit in service.go).
+// After every completed exchange, the new user + assistant messages are appended.
+func WithHistoryStore(store HistoryStore, sessionID string) ServiceOption {
+	return func(s *Service) {
+		s.historyStore = store
+		s.sessionID = sessionID
+	}
+}
+
 func NewService(adapter Adapter, opts ...ServiceOption) *Service {
 	s := &Service{
 		adapter:  adapter,
@@ -73,6 +86,15 @@ func NewService(adapter Adapter, opts ...ServiceOption) *Service {
 	}
 	if s.streamCb == nil {
 		s.streamCb = func(msg string) { fmt.Print(msg) }
+	}
+	// Load persisted history into the LLM context window (last 20 messages).
+	if s.historyStore != nil && s.sessionID != "" {
+		if msgs, err := s.historyStore.Load(s.sessionID); err == nil && len(msgs) > 0 {
+			if len(msgs) > 20 {
+				msgs = msgs[len(msgs)-20:]
+			}
+			s.history = append(s.history, msgs...)
+		}
 	}
 	return s
 }
@@ -138,8 +160,13 @@ func (s *Service) SendWithContext(ctx context.Context, input string, mwCtx map[s
 			// Return the replaced text immediately as the answer.
 			if strings.TrimSpace(updated) != "" {
 				if !isHeartbeat {
-					s.history = append(s.history, Message{Role: RoleUser, Content: input})
-					s.history = append(s.history, Message{Role: RoleAssistant, Content: updated})
+					userMsg := Message{Role: RoleUser, Content: input}
+					assistMsg := Message{Role: RoleAssistant, Content: updated}
+					s.history = append(s.history, userMsg)
+					s.history = append(s.history, assistMsg)
+					if s.historyStore != nil && s.sessionID != "" {
+						_ = s.historyStore.Append(s.sessionID, userMsg, assistMsg)
+					}
 					s.streamCb(updated + "\n") // Print to user since loop won't run
 				}
 				return updated, nil
@@ -317,10 +344,16 @@ func (s *Service) SendWithContext(ctx context.Context, input string, mwCtx map[s
 
 	// Finalize history with original user input (to keep history compact)
 	if !isHeartbeat {
+		prevLen := len(s.history)
 		s.history = append(s.history, Message{Role: RoleUser, Content: input})
 		// Append only what was added in the loop (skipping the new User message)
 		if len(currentHistory) > len(s.history) {
 			s.history = append(s.history, currentHistory[len(s.history):]...)
+		}
+		// Persist the newly added messages (from prevLen onward).
+		if s.historyStore != nil && s.sessionID != "" {
+			newMsgs := s.history[prevLen:]
+			_ = s.historyStore.Append(s.sessionID, newMsgs...)
 		}
 	}
 
