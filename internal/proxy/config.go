@@ -32,10 +32,11 @@ func DefaultConfig() *Config {
 			APIKeyHeader: "x-api-key",
 		},
 		Ollama: OllamaConfig{
-			BaseURL:          "http://localhost:11434",
-			EmbeddingModel:   "nomic-embed-text",
-			CompressionModel: "llama3.2:1b",
-			FastModel:        "llama3.2:1b",
+			BaseURL:              "http://localhost:11434",
+			EmbeddingModel:       "nomic-embed-text",
+			CompressionModel:     "llama3.2:1b",
+			FastModel:            "llama3.2:1b",
+			CompressionThreshold: 12000,
 		},
 		RAG: RAGConfig{
 			ChromaPath:        "./chroma_data",

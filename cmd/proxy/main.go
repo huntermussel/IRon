@@ -38,7 +38,7 @@ func main() {
 		semanticcache.New("http://localhost:8000", embedClient, cfg.Cache.SimilarityThreshold, cfg.Cache.TTLHours),
 		rag.New("http://localhost:8000", cfg.RAG.ChromaPath, cfg.RAG.DefaultCollection, cfg.RAG.TopK, embedClient, nluRouter),
 		websearch.New(nluRouter, cfg.Search.MaxResults, cfg.Search.TimeoutSeconds),
-		contextcompressor.New(cfg.Ollama.BaseURL, cfg.Ollama.CompressionModel, 12000),
+		contextcompressor.New(cfg.Ollama.BaseURL, cfg.Ollama.CompressionModel, cfg.Ollama.CompressionThreshold),
 	}
 	srv.SetupPipelineWith(middlewares...)
 

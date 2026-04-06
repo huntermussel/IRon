@@ -3,7 +3,7 @@ package proxy
 type Config struct {
 	Proxy  ProxyConfig  `json:"proxy"`
 	Ollama OllamaConfig `json:"ollama"`
-	RAG    RAGConfig   `json:"rag"`
+	RAG    RAGConfig    `json:"rag"`
 	Search SearchConfig `json:"search"`
 	Cache  CacheConfig  `json:"cache"`
 }
@@ -16,10 +16,11 @@ type ProxyConfig struct {
 }
 
 type OllamaConfig struct {
-	BaseURL          string `json:"base_url"`
-	EmbeddingModel   string `json:"embedding_model"`
-	CompressionModel string `json:"compression_model"`
-	FastModel        string `json:"fast_model"`
+	BaseURL              string `json:"base_url"`
+	EmbeddingModel       string `json:"embedding_model"`
+	CompressionModel     string `json:"compression_model"`
+	FastModel            string `json:"fast_model"`
+	CompressionThreshold int    `json:"compression_threshold"`
 }
 
 type RAGConfig struct {
