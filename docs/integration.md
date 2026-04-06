@@ -262,8 +262,8 @@ IRon classifies every user query into one of five intents:
 |---|---|---|
 | `simple_query` | Default | No augmentation |
 | `complex_task` | Keywords: plan, analyze, compare, design | No augmentation (chain-of-thought) |
-| `rag_request` | Keywords: context, knowledge base, documentation, stored, remember | Inject ChromaDB context |
-| `web_search` | Keywords: current, latest, today, news, weather | Inject DuckDuckGo results |
+| `rag_request` | Keywords: context, knowledge base, documentation, stored, remember, previously, from earlier | Inject ChromaDB context |
+| `web_search` | Keywords: current, latest, today, news, weather, search for, find on the web | Inject DuckDuckGo results |
 | `code_generation` | Keywords: write code, generate, implement, or language patterns | No augmentation |
 
 Keyword matching runs first (fast path). If no keyword matches, Ollama classifies with the `fast_model` (`llama3.2:1b`).
