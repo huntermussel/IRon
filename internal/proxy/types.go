@@ -16,10 +16,11 @@ type ProxyConfig struct {
 }
 
 type OllamaConfig struct {
-	BaseURL          string `json:"base_url"`
-	EmbeddingModel   string `json:"embedding_model"`
-	CompressionModel string `json:"compression_model"`
-	FastModel        string `json:"fast_model"`
+	BaseURL                    string `json:"base_url"`
+	EmbeddingModel             string `json:"embedding_model"`
+	CompressionModel           string `json:"compression_model"`
+	FastModel                  string `json:"fast_model"`
+	CompressionThresholdTokens int    `json:"compression_threshold_tokens"`
 }
 
 type RAGConfig struct {
