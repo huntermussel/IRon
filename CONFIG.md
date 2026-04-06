@@ -25,6 +25,7 @@ See `config.json.example` for a complete template.
 | `embedding_model` | string | `"nomic-embed-text"` | Model used for semantic embeddings |
 | `compression_model` | string | `"llama3.2:1b"` | Small model used for context summarization |
 | `fast_model` | string | `"llama3.2:1b"` | Small model used for NLU intent classification |
+| `compression_threshold_tokens` | int | `12000` | Token threshold for triggering context compression |
 
 ### chroma
 
