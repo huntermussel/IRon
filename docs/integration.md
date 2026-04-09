@@ -232,7 +232,7 @@ IRon intercepts every request and runs it through four middleware stages:
 
 ### 2. RAG (Retrieval-Augmented Generation)
 - Runs the query through the NLU intent classifier
-- If intent is `rag_request` (keywords: "context", "knowledge base", "documentation", "stored", "remember", "from earlier"):
+- If intent is `rag_request` (keywords: "context", "knowledge base", "documentation", "stored", "remember", "previously", "from earlier"):
   - Embeds the query
   - Retrieves top-5 chunks from ChromaDB collection `iron_context`
   - Injects results as a `[RAG CONTEXT]` system message
@@ -262,7 +262,7 @@ IRon classifies every user query into one of five intents:
 |---|---|---|
 | `simple_query` | Default | No augmentation |
 | `complex_task` | Keywords: plan, analyze, compare, design | No augmentation (chain-of-thought) |
-| `rag_request` | Keywords: context, knowledge base, documentation, stored, remember | Inject ChromaDB context |
+| `rag_request` | Keywords: context, knowledge base, documentation, stored, remember, previously, from earlier | Inject ChromaDB context |
 | `web_search` | Keywords: current, latest, today, news, weather | Inject DuckDuckGo results |
 | `code_generation` | Keywords: write code, generate, implement, or language patterns | No augmentation |
 
